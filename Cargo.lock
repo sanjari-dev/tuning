@@ -1697,6 +1697,7 @@ dependencies = [
  "chrono",
  "clickhouse-rs",
  "dotenvy",
+ "futures-util",
  "rust_decimal",
  "tokio",
 ]

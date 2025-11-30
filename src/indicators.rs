@@ -28,7 +28,6 @@ fn calculate_tr(high: f64, low: f64, prev_close: f64) -> f64 {
 
 // ======================= CORE INDICATORS =======================
 
-// 1. SMA
 pub fn calculate_sma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -45,7 +44,6 @@ pub fn calculate_sma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 2. EMA
 pub fn calculate_ema(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -64,7 +62,6 @@ pub fn calculate_ema(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 3. WMA
 pub fn calculate_wma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = Vec::with_capacity(len);
@@ -91,7 +88,6 @@ pub fn calculate_wma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 4. VWMA
 pub fn calculate_vwma(prices: &[f64], volumes: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = prices.len();
     let mut result = vec![None; len];
@@ -114,7 +110,6 @@ pub fn calculate_vwma(prices: &[f64], volumes: &[f64], period: usize) -> Vec<Opt
     result
 }
 
-// 5. HMA
 pub fn calculate_hma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     if period == 0 || len < period { return vec![None; len]; }
@@ -148,7 +143,6 @@ pub fn calculate_hma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 6. SMMA
 pub fn calculate_smma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -159,7 +153,6 @@ pub fn calculate_smma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result[period - 1] = Some(prev);
 
     for i in period..len {
-        // Formula: (Prev * (n-1) + Curr) / n
         let curr = (prev * (period as f64 - 1.0) + data[i]) / period as f64;
         result[i] = Some(curr);
         prev = curr;
@@ -167,7 +160,6 @@ pub fn calculate_smma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 7. DEMA
 pub fn calculate_dema(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let ema1 = calculate_ema(data, period);
@@ -206,7 +198,6 @@ pub fn calculate_dema(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 8. TEMA
 pub fn calculate_tema(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     if period == 0 || len < period { return vec![None; len]; }
@@ -237,7 +228,6 @@ pub fn calculate_tema(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 9. RSI
 pub fn calculate_rsi(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -269,7 +259,6 @@ pub fn calculate_rsi(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 10. CCI
 pub fn calculate_cci(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = close.len();
     let mut result = vec![None; len];
@@ -295,7 +284,6 @@ pub fn calculate_cci(high: &[f64], low: &[f64], close: &[f64], period: usize) ->
     result
 }
 
-// 11. Momentum
 pub fn calculate_momentum(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -306,7 +294,6 @@ pub fn calculate_momentum(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 12. ROC
 pub fn calculate_roc(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -320,10 +307,10 @@ pub fn calculate_roc(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 13. Williams %R
 pub fn calculate_williams_r(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = close.len();
     let mut result = vec![None; len];
+
     if period == 0 || len < period { return result; }
 
     for i in (period - 1)..len {
@@ -343,7 +330,6 @@ pub fn calculate_williams_r(high: &[f64], low: &[f64], close: &[f64], period: us
     result
 }
 
-// 14. ATR
 pub fn calculate_atr(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = close.len();
     let mut result = vec![None; len];
@@ -366,7 +352,6 @@ pub fn calculate_atr(high: &[f64], low: &[f64], close: &[f64], period: usize) ->
     result
 }
 
-// 15. ADX Full (returns ADX, +DI, -DI)
 pub fn calculate_adx_full(high: &[f64], low: &[f64], close: &[f64], period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>) {
     let len = close.len();
     let mut adx_res = vec![None; len];
@@ -430,7 +415,6 @@ pub fn calculate_adx_full(high: &[f64], low: &[f64], close: &[f64], period: usiz
     (adx_res, pdi_res, mdi_res)
 }
 
-// 16. TRIX
 pub fn calculate_trix(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     if period == 0 || len < period * 3 { return vec![None; len]; }
@@ -450,7 +434,6 @@ pub fn calculate_trix(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 17. Donchian Full
 pub fn calculate_donchian(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>) {
     let len = high.len();
     let mut upper = vec![None; len];
@@ -472,7 +455,6 @@ pub fn calculate_donchian(high: &[f64], low: &[f64], period: usize) -> (Vec<Opti
     (upper, lower, middle)
 }
 
-// 18. Envelope Full
 pub fn calculate_envelope_full(data: &[f64], period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>) {
     let sma = calculate_sma(data, period);
     let upper = sma.iter().map(|opt| opt.map(|v| v * 1.025)).collect();
@@ -480,7 +462,6 @@ pub fn calculate_envelope_full(data: &[f64], period: usize) -> (Vec<Option<f64>>
     (upper, lower, sma)
 }
 
-// 19. OBV
 pub fn calculate_obv(close: &[f64], volume: &[f64]) -> Vec<f64> {
     let len = close.len();
     if len == 0 { return vec![]; }
@@ -494,7 +475,6 @@ pub fn calculate_obv(close: &[f64], volume: &[f64]) -> Vec<f64> {
     res
 }
 
-// 20. CMF
 pub fn calculate_cmf(high: &[f64], low: &[f64], close: &[f64], volume: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = close.len();
     let mut result = vec![None; len];
@@ -518,7 +498,6 @@ pub fn calculate_cmf(high: &[f64], low: &[f64], close: &[f64], volume: &[f64], p
     result
 }
 
-// 21. Force Index
 pub fn calculate_force_index(close: &[f64], volume: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = close.len();
     if len == 0 { return vec![]; }
@@ -529,7 +508,6 @@ pub fn calculate_force_index(close: &[f64], volume: &[f64], period: usize) -> Ve
     calculate_ema(&raw_force, period)
 }
 
-// 22. MFI
 pub fn calculate_mfi(high: &[f64], low: &[f64], close: &[f64], volume: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = close.len();
     let mut result = vec![None; len];
@@ -561,7 +539,6 @@ pub fn calculate_mfi(high: &[f64], low: &[f64], close: &[f64], volume: &[f64], p
     result
 }
 
-// 23. Vortex
 pub fn calculate_vortex(high: &[f64], low: &[f64], close: &[f64], period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
     let len = close.len();
     let mut vi_plus = vec![None; len];
@@ -591,7 +568,6 @@ pub fn calculate_vortex(high: &[f64], low: &[f64], close: &[f64], period: usize)
     (vi_plus, vi_minus)
 }
 
-// 24. Aroon Full
 pub fn calculate_aroon(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
     let len = high.len();
     let mut up_vec = vec![None; len];
@@ -630,7 +606,6 @@ pub fn calculate_aroon_osc(up: &[Option<f64>], down: &[Option<f64>]) -> Vec<Opti
     }).collect()
 }
 
-// 25. CMO
 pub fn calculate_cmo(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -658,7 +633,6 @@ pub fn calculate_cmo(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 26. Std Dev
 pub fn calculate_std_dev(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -671,7 +645,6 @@ pub fn calculate_std_dev(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 27. Variance
 pub fn calculate_variance(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -685,7 +658,6 @@ pub fn calculate_variance(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 28. Median
 pub fn calculate_median(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
     let mut result = vec![None; len];
@@ -704,7 +676,6 @@ pub fn calculate_median(data: &[f64], period: usize) -> Vec<Option<f64>> {
     result
 }
 
-// 29. FCB
 pub fn calculate_fcb(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
     let len = high.len();
     let mut upper = vec![None; len];
@@ -728,8 +699,6 @@ pub fn calculate_fcb(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<f6
     (upper, lower)
 }
 
-
-// --- ORCHESTRATOR ---
 pub fn append_indicators(
     fields: &mut Vec<Field>,
     columns: &mut Vec<Arc<dyn Array>>,
@@ -740,68 +709,74 @@ pub fn append_indicators(
     volumes: &[f64],
     min_period: usize,
     max_period: usize,
+    offset: usize,
 ) {
     let obv_vals = calculate_obv(close, volumes);
+
     fields.push(Field::new("obv_line", DataType::Float64, false));
-    columns.push(Arc::new(Float64Array::from(obv_vals.clone())));
+    columns.push(Arc::new(Float64Array::from(obv_vals[offset..].to_vec())));
 
     for period in min_period..=max_period {
         let mut add = |name: &str, data: Vec<Option<f64>>| {
-            fields.push(Field::new(format!("{}_{}", name, period), DataType::Float64, true));
-            columns.push(Arc::new(Float64Array::from(data)));
+            fields.push(Field::new(name, DataType::Float64, true));
+            columns.push(Arc::new(Float64Array::from(data[offset..].to_vec())));
         };
 
-        add("sma", calculate_sma(close, period));
-        add("ema", calculate_ema(close, period));
-        add("wma", calculate_wma(close, period));
-        add("vwma", calculate_vwma(close, volumes, period));
-        add("hma", calculate_hma(close, period));
-        add("smma", calculate_smma(close, period));
-        add("dema", calculate_dema(close, period));
-        add("tema", calculate_tema(close, period));
-        add("rsi", calculate_rsi(close, period));
-        add("cci", calculate_cci(high, low, close, period));
-        add("mom", calculate_momentum(close, period));
-        add("roc", calculate_roc(close, period));
-        add("wpr", calculate_williams_r(high, low, close, period));
-        add("atr", calculate_atr(high, low, close, period));
+        add(&format!("sma_{}", period), calculate_sma(close, period));
+        add(&format!("ema_{}", period), calculate_ema(close, period));
+        add(&format!("wma_{}", period), calculate_wma(close, period));
+        add(&format!("vwma_{}", period), calculate_vwma(close, volumes, period));
+        add(&format!("hma_{}", period), calculate_hma(close, period));
+        add(&format!("smma_{}", period), calculate_smma(close, period));
+        add(&format!("dema_{}", period), calculate_dema(close, period));
+        add(&format!("tema_{}", period), calculate_tema(close, period));
+        add(&format!("rsi_{}", period), calculate_rsi(close, period));
+        add(&format!("cci_{}", period), calculate_cci(high, low, close, period));
+        add(&format!("mom_{}", period), calculate_momentum(close, period));
+        add(&format!("roc_{}", period), calculate_roc(close, period));
+        add(&format!("wpr_{}", period), calculate_williams_r(high, low, close, period));
+        add(&format!("atr_{}", period), calculate_atr(high, low, close, period));
 
         let (adx, pdi, mdi) = calculate_adx_full(high, low, close, period);
-        add("adx", adx);
-        add("pdi", pdi);
-        add("mdi", mdi);
-        add("trix", calculate_trix(close, period));
-        add("sm_rsi", calculate_rsi(close, period));
+        add(&format!("adx_{}", period), adx);
+        add(&format!("pdi_{}", period), pdi);
+        add(&format!("mdi_{}", period), mdi);
+
+        add(&format!("trix_{}", period), calculate_trix(close, period));
+        add(&format!("sm_rsi_{}", period), calculate_rsi(close, period));
 
         let (don_u, don_l, don_m) = calculate_donchian(high, low, period);
-        add("donchian_upper", don_u);
-        add("donchian_lower", don_l);
-        add("donchian_middle", don_m);
+        add(&format!("donchian_upper_{}", period), don_u);
+        add(&format!("donchian_lower_{}", period), don_l);
+        add(&format!("donchian_middle_{}", period), don_m);
 
         let (env_u, env_l, env_m) = calculate_envelope_full(close, period);
-        add("env_upper", env_u);
-        add("env_lower", env_l);
-        add("env_middle", env_m);
-        add("fi", calculate_force_index(close, volumes, period));
-        add("cmf", calculate_cmf(high, low, close, volumes, period));
-        add("mfi", calculate_mfi(high, low, close, volumes, period));
+        add(&format!("env_upper_{}", period), env_u);
+        add(&format!("env_lower_{}", period), env_l);
+        add(&format!("env_middle_{}", period), env_m);
+
+        add(&format!("fi_{}", period), calculate_force_index(close, volumes, period));
+        add(&format!("cmf_{}", period), calculate_cmf(high, low, close, volumes, period));
+        add(&format!("mfi_{}", period), calculate_mfi(high, low, close, volumes, period));
 
         let (vi_p, vi_m) = calculate_vortex(high, low, close, period);
-        add("vi_plus", vi_p);
-        add("vi_minus", vi_m);
+        add(&format!("vi_plus_{}", period), vi_p);
+        add(&format!("vi_minus_{}", period), vi_m);
 
         let (ar_u, ar_d) = calculate_aroon(high, low, period);
-        add("aroon_up", ar_u.clone());
-        add("aroon_down", ar_d.clone());
-        add("aroon_osc", calculate_aroon_osc(&ar_u, &ar_d));
-        add("cmo", calculate_cmo(close, period));
-        add("std_dev", calculate_std_dev(close, period));
-        add("variance", calculate_variance(close, period));
-        add("median", calculate_median(close, period));
+        add(&format!("aroon_up_{}", period), ar_u.clone());
+        add(&format!("aroon_down_{}", period), ar_d.clone());
+        add(&format!("aroon_osc_{}", period), calculate_aroon_osc(&ar_u, &ar_d));
+
+        add(&format!("cmo_{}", period), calculate_cmo(close, period));
+        add(&format!("std_dev_{}", period), calculate_std_dev(close, period));
+        add(&format!("variance_{}", period), calculate_variance(close, period));
+        add(&format!("median_{}", period), calculate_median(close, period));
 
         let (fcb_u, fcb_l) = calculate_fcb(high, low, period);
-        add("fcb_upper", fcb_u);
-        add("fcb_lower", fcb_l);
-        add("obv_sma", calculate_sma(&obv_vals, period));
+        add(&format!("fcb_upper_{}", period), fcb_u);
+        add(&format!("fcb_lower_{}", period), fcb_l);
+
+        add(&format!("obv_sma_{}", period), calculate_sma(&obv_vals, period));
     }
 }
