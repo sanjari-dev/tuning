@@ -26,7 +26,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     const MAX_PERIOD: usize = 200;
     const TEMP_FILE: &str = "temp_raw_indicators.csv";
-    const FINAL_FILE: &str = "tuning_output.csv";
+    const FINAL_FILE: &str = "tuning_output_head.csv";
+    const HEAD_LIMIT: usize = 1000;
 
     macro_rules! log {
         ($icon:expr, $msg:expr) => {
@@ -37,21 +38,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         };
     }
 
-    log!("🚀", "Starting Application");
+    log!("🚀", "Starting Application...");
 
     // 1. Load Config
     let config = AppConfig::load()?;
-    log!("🔌", "Connecting to ClickHouse at {}", config.db_url);
 
+    // 2. Connect
+    log!("🔌", "Connecting to ClickHouse at {}...", config.db_url);
     let repository = ClickHouseRepository::new(&config.db_url);
     let mut client = repository.get_connection().await?;
 
-    // 2. Build Query via Repository
+    // 3. Build Query
     let sql_query = ClickHouseRepository::build_candles_query(&config);
 
-    log!("🌊", "Executing Streaming Query");
+    log!("🌊", "Executing Streaming Query...");
 
-    // --- 3. STREAMING STATE ---
+    // --- STREAMING STATE ---
     let mut buf_opens: Vec<f64> = Vec::new();
     let mut buf_highs: Vec<f64> = Vec::new();
     let mut buf_lows: Vec<f64> = Vec::new();
@@ -73,7 +75,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let (mut columns, math_data, mut fields) = parse_block(&block)?;
         let row_count = math_data.closes.len();
 
-        // --- B. Merge Buffer ---
+        // Merge Buffer
         let full_opens = [buf_opens.as_slice(), math_data.opens.as_slice()].concat();
         let full_highs = [buf_highs.as_slice(), math_data.highs.as_slice()].concat();
         let full_lows = [buf_lows.as_slice(), math_data.lows.as_slice()].concat();
@@ -83,42 +85,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if full_closes.len() <= MAX_PERIOD {
             buf_opens = full_opens; buf_highs = full_highs; buf_lows = full_lows;
             buf_closes = full_closes; buf_volumes = full_volumes;
-            log!("⏳", "Buffering initial data (Current: {}, Need > {})", buf_closes.len(), MAX_PERIOD);
+            log!("⏳", "Buffering initial data...");
             continue;
         }
 
-        // --- C. Indicators ---
+        // Calculate Indicators
         let offset = buf_opens.len();
         indicators::append_indicators(
-            &mut fields,
-            &mut columns,
-            &full_opens,
-            &full_highs,
-            &full_lows,
-            &full_closes,
-            &full_volumes,
-            5,
-            200,
-            offset // Passing offset
+            &mut fields, &mut columns,
+            &full_opens, &full_highs, &full_lows, &full_closes, &full_volumes,
+            5, 200, offset
         );
 
-        // --- D. Create Batch & Save Schema ---
+        // Create Batch
         let schema = Schema::new(fields);
         if saved_schema.is_none() { saved_schema = Some(Arc::new(schema.clone())); }
         let batch = RecordBatch::try_new(Arc::new(schema), columns)?;
-
-        // --- E. Phase 1 Cleaning ---
         if cleaner.is_none() { cleaner = Some(Phase1Cleaner::new(batch.schema())); }
         if let Some(c) = &mut cleaner { c.check_batch(&batch); }
-
-        // --- F. Write to TEMP CSV ---
         if csv_writer.is_none() {
             let file = File::create(TEMP_FILE)?;
             csv_writer = Some(WriterBuilder::new().with_header(true).build(file));
         }
         if let Some(w) = &mut csv_writer { w.write(&batch)?; }
 
-        // --- G. Update Buffer ---
+        // Update Buffer
         buf_opens = get_tail(&full_opens, MAX_PERIOD);
         buf_highs = get_tail(&full_highs, MAX_PERIOD);
         buf_lows = get_tail(&full_lows, MAX_PERIOD);
@@ -131,12 +122,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     drop(csv_writer);
 
-    // --- 4. FINALIZE ---
-    log!("🧹", "Finalizing: Applying Phase 1 Selection");
+    // --- 4. FINALIZE (EXPORT HEAD ONLY) ---
+    log!("🧹", "Finalizing: Exporting HEAD SAMPLE ONLY...");
 
     if let Some(c) = cleaner {
         let (keep_cols, dropped) = c.get_results();
-        log!("📊", "Phase 1 Stats: Kept {} cols | Dropped {} cols", keep_cols.len(), dropped.len());
+        log!("📊", "Phase 1 Analysis (Based on FULL DATA):");
+        log!("   ", "- Kept Columns: {}", keep_cols.len());
+        log!("   ", "- Dropped Columns: {}", dropped.len());
 
         let file = File::open(TEMP_FILE)?;
         let schema_ref = saved_schema.ok_or("No schema available")?;
@@ -151,17 +144,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut final_writer = WriterBuilder::new().with_header(true).build(final_file);
 
         let finalize_start = Instant::now();
+        let mut rows_written = 0;
         while let Some(batch_res) = reader.next() {
+            if rows_written >= HEAD_LIMIT {
+                break;
+            }
             let batch = batch_res?;
             let clean_rows = filter_null_rows(&batch)?;
             if clean_rows.num_rows() > 0 {
                 let projected = clean_rows.project(&indices)?;
-                final_writer.write(&projected)?;
+                let remaining = HEAD_LIMIT - rows_written;
+                let rows_to_write = std::cmp::min(projected.num_rows(), remaining);
+                let slice = projected.slice(0, rows_to_write);
+
+                final_writer.write(&slice)?;
+                rows_written += rows_to_write;
             }
         }
 
         fs::remove_file(TEMP_FILE)?;
-        log!("💾", "Final Export Complete ({}) in {:.2?}", FINAL_FILE, finalize_start.elapsed());
+
+        log!("💾", "Sample Export Complete: Written {} rows to '{}' in {:.2?}", rows_written, FINAL_FILE, finalize_start.elapsed());
+        log!("ℹ️", "Note: Phase 1 analysis used ALL data, but CSV only contains the top {} rows for inspection.", rows_written);
+
     } else {
         log!("⚠️", "No data processed.");
     }
