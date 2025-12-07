@@ -1,6 +1,8 @@
+use crate::gpu_indicators::GpuIndicatorHelper;
 use arrow::array::{Array, Float64Array};
 use arrow::datatypes::{DataType, Field};
 use std::sync::Arc;
+use rayon::prelude::*;
 
 // ======================= HELPER FUNCTIONS =======================
 
@@ -710,73 +712,112 @@ pub fn append_indicators(
     min_period: usize,
     max_period: usize,
     offset: usize,
+    gpu_helper: Option<&GpuIndicatorHelper>,
 ) {
     let obv_vals = calculate_obv(close, volumes);
-
     fields.push(Field::new("obv_line", DataType::Float64, false));
     columns.push(Arc::new(Float64Array::from(obv_vals[offset..].to_vec())));
 
-    for period in min_period..=max_period {
-        let mut add = |name: &str, data: Vec<Option<f64>>| {
-            fields.push(Field::new(name, DataType::Float64, true));
-            columns.push(Arc::new(Float64Array::from(data[offset..].to_vec())));
-        };
+    let high_ref = high.to_vec();
+    let low_ref = low.to_vec();
+    let close_ref = close.to_vec();
+    let vol_ref = volumes.to_vec();
+    let obv_ref = obv_vals;
 
-        add(&format!("sma_{}", period), calculate_sma(close, period));
-        add(&format!("ema_{}", period), calculate_ema(close, period));
-        add(&format!("wma_{}", period), calculate_wma(close, period));
-        add(&format!("vwma_{}", period), calculate_vwma(close, volumes, period));
-        add(&format!("hma_{}", period), calculate_hma(close, period));
-        add(&format!("smma_{}", period), calculate_smma(close, period));
-        add(&format!("dema_{}", period), calculate_dema(close, period));
-        add(&format!("tema_{}", period), calculate_tema(close, period));
-        add(&format!("rsi_{}", period), calculate_rsi(close, period));
-        add(&format!("cci_{}", period), calculate_cci(high, low, close, period));
-        add(&format!("mom_{}", period), calculate_momentum(close, period));
-        add(&format!("roc_{}", period), calculate_roc(close, period));
-        add(&format!("wpr_{}", period), calculate_williams_r(high, low, close, period));
-        add(&format!("atr_{}", period), calculate_atr(high, low, close, period));
+    // PARALLEL EXECUTION (RAYON)
+    let results: Vec<(Vec<Field>, Vec<Arc<dyn Array>>)> = (min_period..=max_period)
+        .into_par_iter()
+        .map(|period| {
+            let mut local_fields = Vec::new();
+            let mut local_cols = Vec::new();
 
-        let (adx, pdi, mdi) = calculate_adx_full(high, low, close, period);
-        add(&format!("adx_{}", period), adx);
-        add(&format!("pdi_{}", period), pdi);
-        add(&format!("mdi_{}", period), mdi);
+            let mut add = |name: &str, data: Vec<Option<f64>>| {
+                local_fields.push(Field::new(name, DataType::Float64, true));
+                let sliced_data = if offset < data.len() {
+                    data[offset..].to_vec()
+                } else {
+                    vec![]
+                };
+                local_cols.push(Arc::new(Float64Array::from(sliced_data)) as Arc<dyn Array>);
+            };
 
-        add(&format!("trix_{}", period), calculate_trix(close, period));
-        add(&format!("sm_rsi_{}", period), calculate_rsi(close, period));
+            // Hybrid: GPU for parallelizable, CPU for recursive
+            if let Some(gpu) = gpu_helper {
+                add(&format!("sma_{}", period), gpu.calculate_sma(period));
+                add(&format!("wma_{}", period), gpu.calculate_wma(period));
 
-        let (don_u, don_l, don_m) = calculate_donchian(high, low, period);
-        add(&format!("donchian_upper_{}", period), don_u);
-        add(&format!("donchian_lower_{}", period), don_l);
-        add(&format!("donchian_middle_{}", period), don_m);
+                let (env_u, env_l, env_m) = gpu.calculate_envelope(period);
+                add(&format!("env_upper_{}", period), env_u);
+                add(&format!("env_lower_{}", period), env_l);
+                add(&format!("env_middle_{}", period), env_m);
 
-        let (env_u, env_l, env_m) = calculate_envelope_full(close, period);
-        add(&format!("env_upper_{}", period), env_u);
-        add(&format!("env_lower_{}", period), env_l);
-        add(&format!("env_middle_{}", period), env_m);
+                add(&format!("std_dev_{}", period), gpu.calculate_std_dev(period));
+                add(&format!("variance_{}", period), gpu.calculate_variance(period));
+            } else {
+                add(&format!("sma_{}", period), calculate_sma(&close_ref, period));
+                add(&format!("wma_{}", period), calculate_wma(&close_ref, period));
+                let (env_u, env_l, env_m) = calculate_envelope_full(&close_ref, period);
+                add(&format!("env_upper_{}", period), env_u);
+                add(&format!("env_lower_{}", period), env_l);
+                add(&format!("env_middle_{}", period), env_m);
+                add(&format!("std_dev_{}", period), calculate_std_dev(&close_ref, period));
+                add(&format!("variance_{}", period), calculate_variance(&close_ref, period));
+            }
 
-        add(&format!("fi_{}", period), calculate_force_index(close, volumes, period));
-        add(&format!("cmf_{}", period), calculate_cmf(high, low, close, volumes, period));
-        add(&format!("mfi_{}", period), calculate_mfi(high, low, close, volumes, period));
+            add(&format!("ema_{}", period), calculate_ema(&close_ref, period));
+            add(&format!("vwma_{}", period), calculate_vwma(&close_ref, &vol_ref, period));
+            add(&format!("hma_{}", period), calculate_hma(&close_ref, period));
+            add(&format!("smma_{}", period), calculate_smma(&close_ref, period));
+            add(&format!("dema_{}", period), calculate_dema(&close_ref, period));
+            add(&format!("tema_{}", period), calculate_tema(&close_ref, period));
+            add(&format!("rsi_{}", period), calculate_rsi(&close_ref, period));
+            add(&format!("cci_{}", period), calculate_cci(&high_ref, &low_ref, &close_ref, period));
+            add(&format!("mom_{}", period), calculate_momentum(&close_ref, period));
+            add(&format!("roc_{}", period), calculate_roc(&close_ref, period));
+            add(&format!("wpr_{}", period), calculate_williams_r(&high_ref, &low_ref, &close_ref, period));
+            add(&format!("atr_{}", period), calculate_atr(&high_ref, &low_ref, &close_ref, period));
 
-        let (vi_p, vi_m) = calculate_vortex(high, low, close, period);
-        add(&format!("vi_plus_{}", period), vi_p);
-        add(&format!("vi_minus_{}", period), vi_m);
+            let (adx, pdi, mdi) = calculate_adx_full(&high_ref, &low_ref, &close_ref, period);
+            add(&format!("adx_{}", period), adx);
+            add(&format!("pdi_{}", period), pdi);
+            add(&format!("mdi_{}", period), mdi);
 
-        let (ar_u, ar_d) = calculate_aroon(high, low, period);
-        add(&format!("aroon_up_{}", period), ar_u.clone());
-        add(&format!("aroon_down_{}", period), ar_d.clone());
-        add(&format!("aroon_osc_{}", period), calculate_aroon_osc(&ar_u, &ar_d));
+            add(&format!("trix_{}", period), calculate_trix(&close_ref, period));
+            add(&format!("sm_rsi_{}", period), calculate_rsi(&close_ref, period));
 
-        add(&format!("cmo_{}", period), calculate_cmo(close, period));
-        add(&format!("std_dev_{}", period), calculate_std_dev(close, period));
-        add(&format!("variance_{}", period), calculate_variance(close, period));
-        add(&format!("median_{}", period), calculate_median(close, period));
+            let (don_u, don_l, don_m) = calculate_donchian(&high_ref, &low_ref, period);
+            add(&format!("donchian_upper_{}", period), don_u);
+            add(&format!("donchian_lower_{}", period), don_l);
+            add(&format!("donchian_middle_{}", period), don_m);
 
-        let (fcb_u, fcb_l) = calculate_fcb(high, low, period);
-        add(&format!("fcb_upper_{}", period), fcb_u);
-        add(&format!("fcb_lower_{}", period), fcb_l);
+            add(&format!("fi_{}", period), calculate_force_index(&close_ref, &vol_ref, period));
+            add(&format!("cmf_{}", period), calculate_cmf(&high_ref, &low_ref, &close_ref, &vol_ref, period));
+            add(&format!("mfi_{}", period), calculate_mfi(&high_ref, &low_ref, &close_ref, &vol_ref, period));
 
-        add(&format!("obv_sma_{}", period), calculate_sma(&obv_vals, period));
+            let (vi_p, vi_m) = calculate_vortex(&high_ref, &low_ref, &close_ref, period);
+            add(&format!("vi_plus_{}", period), vi_p);
+            add(&format!("vi_minus_{}", period), vi_m);
+
+            let (ar_u, ar_d) = calculate_aroon(&high_ref, &low_ref, period);
+            add(&format!("aroon_up_{}", period), ar_u.clone());
+            add(&format!("aroon_down_{}", period), ar_d.clone());
+            add(&format!("aroon_osc_{}", period), calculate_aroon_osc(&ar_u, &ar_d));
+
+            add(&format!("cmo_{}", period), calculate_cmo(&close_ref, period));
+            add(&format!("median_{}", period), calculate_median(&close_ref, period));
+
+            let (fcb_u, fcb_l) = calculate_fcb(&high_ref, &low_ref, period);
+            add(&format!("fcb_upper_{}", period), fcb_u);
+            add(&format!("fcb_lower_{}", period), fcb_l);
+
+            add(&format!("obv_sma_{}", period), calculate_sma(&obv_ref, period));
+
+            (local_fields, local_cols)
+        })
+        .collect();
+
+    for (f, c) in results {
+        fields.extend(f);
+        columns.extend(c);
     }
 }

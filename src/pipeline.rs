@@ -15,6 +15,7 @@ use crate::repository::ClickHouseRepository;
 use crate::phase1::Phase1Cleaner;
 use crate::phase2::Phase2Streaming;
 use crate::conversion::parse_block;
+use crate::gpu_indicators::GpuIndicatorHelper;
 use crate::indicators;
 use crate::utils::{filter_null_rows, get_tail};
 
@@ -82,10 +83,12 @@ impl TuningPipeline {
             }
 
             let offset = buf_opens.len();
+            let gpu_helper = GpuIndicatorHelper::new(&full_closes, &full_highs, &full_lows);
             indicators::append_indicators(
                 &mut fields, &mut columns,
                 &full_opens, &full_highs, &full_lows, &full_closes, &full_volumes,
-                5, 200, offset
+                5, 200, offset,
+                Some(&gpu_helper)
             );
 
             let schema = Arc::new(Schema::new(fields));
@@ -215,10 +218,12 @@ impl TuningPipeline {
             }
 
             let offset = buf_opens.len();
+            let gpu_helper = GpuIndicatorHelper::new(&full_closes, &full_highs, &full_lows);
             indicators::append_indicators(
                 &mut fields, &mut columns,
                 &full_opens, &full_highs, &full_lows, &full_closes, &full_volumes,
-                5, 200, offset
+                5, 200, offset,
+                Some(&gpu_helper)
             );
 
             let schema = Arc::new(Schema::new(fields));

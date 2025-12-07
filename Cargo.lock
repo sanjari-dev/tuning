@@ -6687,6 +6687,7 @@ dependencies = [
  "kodama",
  "ndarray 0.17.1",
  "parquet",
+ "rayon",
  "rust_decimal",
  "tokio",
 ]

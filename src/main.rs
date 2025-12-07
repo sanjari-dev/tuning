@@ -6,6 +6,7 @@ mod phase2;
 mod utils;
 mod repository;
 mod pipeline;
+mod gpu_indicators;
 
 use config::AppConfig;
 use pipeline::TuningPipeline;
