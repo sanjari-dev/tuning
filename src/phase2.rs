@@ -1,33 +1,33 @@
 use ndarray::{Array1, Array2, Axis};
 use kodama::{linkage, Method};
 use std::collections::{HashMap, HashSet};
-
-macro_rules! log {
-    ($icon:expr, $msg:expr) => {
-        println!("{} [Phase 2] {}", $icon, $msg);
-    };
-    ($icon:expr, $fmt:expr, $($arg:tt)*) => {
-        println!("{} [Phase 2] {}", $icon, format!($fmt, $($arg)*));
-    };
-}
+use std::time::Instant;
 
 pub struct Phase2Streaming {
     pub feature_names: Vec<String>,
     sum_x: Array1<f64>,
     sum_xy: Array2<f64>,
     n: usize,
+    start_time: Instant,
 }
 
 impl Phase2Streaming {
-    pub fn new(feature_names: Vec<String>) -> Self {
+    pub fn new(feature_names: Vec<String>, start_time: Instant) -> Self {
         let num_features = feature_names.len();
-        log!("🔬", "Initialized tracking {} candidate features", num_features);
+
+        println!("[{:>8.2?}] 🔬 [Phase 2] Initialized tracking {} candidate features", start_time.elapsed(), num_features);
+
         Self {
             feature_names,
             sum_x: Array1::zeros(num_features),
             sum_xy: Array2::zeros((num_features, num_features)),
             n: 0,
+            start_time,
         }
+    }
+
+    fn log(&self, icon: &str, msg: impl std::fmt::Display) {
+        println!("[{:>8.2?}] {} [Phase 2] {}", self.start_time.elapsed(), icon, msg);
     }
 
     pub fn add_batch(&mut self, batch_matrix: &Array2<f64>) {
@@ -57,14 +57,14 @@ impl Phase2Streaming {
         }
 
         let num_valid = valid_indices.len();
-        log!("🧠", "Finalizing: Input {} features -> Valid Phase 1 {} features", self.feature_names.len(), num_valid);
+        self.log("🧠", format!("Finalizing: Input {} features -> Valid Phase 1 {} features", self.feature_names.len(), num_valid));
 
         if num_valid < 2 {
-            log!("⚠️", "Not enough features to cluster. Returning all valid features");
+            self.log("⚠️", "Not enough features to cluster. Returning all valid features");
             return final_names;
         }
 
-        log!("🧮", "Reconstructing Correlation Matrix from accumulators");
+        self.log("🧮", "Reconstructing Correlation Matrix from accumulators");
 
         let mut condensed_dist = Vec::with_capacity(num_valid * (num_valid - 1) / 2);
         let mut means = Vec::with_capacity(num_valid);
@@ -100,7 +100,7 @@ impl Phase2Streaming {
             }
         }
 
-        log!("🧬", "Running Hierarchical Clustering (Linkage)");
+        self.log("🧬", "Running Hierarchical Clustering (Linkage)");
 
         let dendrogram = linkage(&mut condensed_dist, num_valid, Method::Average);
         let dist_threshold = 1.0 - threshold;
@@ -141,7 +141,7 @@ impl Phase2Streaming {
             }
         }
 
-        log!("✅", "Clustering complete. Kept {} features out of {}", kept_names.len(), num_valid);
+        self.log("✅", format!("Clustering complete. Kept {} features out of {}", kept_names.len(), num_valid));
         kept_names
     }
 }

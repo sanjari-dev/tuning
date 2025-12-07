@@ -1,43 +1,41 @@
 use arrow::array::{Array, Float64Array, RecordBatch};
 use arrow::datatypes::{DataType, SchemaRef};
 use std::collections::HashMap;
-
-macro_rules! log {
-    ($icon:expr, $msg:expr) => {
-        println!("{} [Phase 1] {}", $icon, $msg);
-    };
-    ($icon:expr, $fmt:expr, $($arg:tt)*) => {
-        println!("{} [Phase 1] {}", $icon, format!($fmt, $($arg)*));
-    };
-}
+use std::time::Instant;
 
 pub struct Phase1Cleaner {
     min_max: Vec<Option<(f64, f64)>>,
     duplicate_groups: Vec<Vec<usize>>,
     schema: SchemaRef,
     batch_counter: usize,
+    start_time: Instant,
 }
 
 impl Phase1Cleaner {
-    pub fn new(schema: SchemaRef) -> Self {
+    pub fn new(schema: SchemaRef, start_time: Instant) -> Self {
         let num_cols = schema.fields().len();
         let initial_group: Vec<usize> = (0..num_cols).collect();
 
-        log!("🧹", "Initialized cleaner structure for {} columns", num_cols);
+        println!("[{:>8.2?}] 🧹 [Phase 1] Initialized cleaner structure for {} columns", start_time.elapsed(), num_cols);
 
         Phase1Cleaner {
             min_max: vec![None; num_cols],
             duplicate_groups: vec![initial_group],
             schema,
             batch_counter: 0,
+            start_time,
         }
+    }
+
+    fn log(&self, icon: &str, msg: impl std::fmt::Display) {
+        println!("[{:>8.2?}] {} [Phase 1] {}", self.start_time.elapsed(), icon, msg);
     }
 
     pub fn check_batch(&mut self, batch: &RecordBatch) {
         self.batch_counter += 1;
         let num_cols = batch.num_columns();
 
-        log!("🔍", "Processing Batch #{}: Scanning {} columns for variance & duplicates", self.batch_counter, num_cols);
+        self.log("🔍", format!("Processing Batch #{}: Scanning {} columns for variance & duplicates", self.batch_counter, num_cols));
 
         // --- 1. Min/Max Check for Zero Variance ---
         for i in 0..num_cols {
@@ -100,14 +98,14 @@ impl Phase1Cleaner {
         }
 
         if new_groups.len() > initial_groups_count {
-            log!("⚡", "Duplicate groups refined: {} groups -> {} unique groups found in this batch", initial_groups_count, new_groups.len());
+            self.log("⚡", format!("Duplicate groups refined: {} groups -> {} unique groups found in this batch", initial_groups_count, new_groups.len()));
         }
 
         self.duplicate_groups = new_groups;
     }
 
     pub fn get_results(&self) -> (Vec<String>, Vec<String>) {
-        log!("🧠", "Finalizing results. Analyzing variance statistics and duplicate groups");
+        self.log("🧠", "Finalizing results. Analyzing variance statistics and duplicate groups");
 
         let mut keep_indices = Vec::new();
         let mut drop_reasons: HashMap<String, String> = HashMap::new();
@@ -130,7 +128,7 @@ impl Phase1Cleaner {
                 }
             }
         }
-        log!("📉", "Found {} features with Zero Variance or All-Nulls", zero_variance_indices.len());
+        self.log("📉", format!("Found {} features with Zero Variance or All-Nulls", zero_variance_indices.len()));
 
         // 2. Resolve Duplicates
         let mut duplicate_drop_count = 0;
@@ -156,7 +154,7 @@ impl Phase1Cleaner {
                 }
             }
         }
-        log!("👯", "Identified {} redundant features (Duplicates)", duplicate_drop_count);
+        self.log("👯", format!("Identified {} redundant features (Duplicates)", duplicate_drop_count));
 
         keep_indices.sort();
 
@@ -171,7 +169,7 @@ impl Phase1Cleaner {
             }
         }
 
-        log!("✅", "Result generation complete. Returning filter lists");
+        self.log("✅", "Result generation complete. Returning filter lists");
         (keep_names, dropped_names)
     }
 }
