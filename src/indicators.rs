@@ -4,15 +4,12 @@ use arrow::datatypes::{DataType, Field};
 use std::sync::Arc;
 use rayon::prelude::*;
 
-// ======================= HELPER FUNCTIONS =======================
-
 fn std_dev_sample(data: &[f64]) -> f64 {
     let len = data.len();
     if len < 2 { return 0.0; }
 
     let sum: f64 = data.iter().sum();
     let mean = sum / len as f64;
-
     let variance = data.iter().map(|value| {
         let diff = mean - value;
         diff * diff
@@ -27,8 +24,6 @@ fn calculate_tr(high: f64, low: f64, prev_close: f64) -> f64 {
     let l_pc = (low - prev_close).abs();
     hl.max(h_pc).max(l_pc)
 }
-
-// ======================= CORE INDICATORS =======================
 
 pub fn calculate_sma(data: &[f64], period: usize) -> Vec<Option<f64>> {
     let len = data.len();
@@ -118,10 +113,8 @@ pub fn calculate_hma(data: &[f64], period: usize) -> Vec<Option<f64>> {
 
     let half_n = period / 2;
     let sqrt_n = ((period as f64).sqrt().round() as usize).max(1);
-
     let wma_half = calculate_wma(data, half_n);
     let wma_full = calculate_wma(data, period);
-
     let start_calc = period - 1;
     let mut diff_series = Vec::with_capacity(len - start_calc);
 
@@ -447,7 +440,6 @@ pub fn calculate_donchian(high: &[f64], low: &[f64], period: usize) -> (Vec<Opti
         let start_idx = (i + 1).saturating_sub(period);
         let h_slice = &high[start_idx..=i];
         let l_slice = &low[start_idx..=i];
-
         let hh = h_slice.iter().fold(f64::MIN, |a, &b| a.max(b));
         let ll = l_slice.iter().fold(f64::MAX, |a, &b| a.min(b));
         upper[i] = Some(hh);
@@ -578,7 +570,6 @@ pub fn calculate_aroon(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<
 
     let calc_aroon_val = |slice: &[f64], is_high: bool| -> f64 {
         let init_val = if is_high { f64::MIN } else { f64::MAX };
-
         let (idx, _) = slice.iter().enumerate().fold((0, init_val), |(i_ex, v_ex), (i, &v)| {
             let update = if is_high { v >= v_ex } else { v <= v_ex };
             if update { (i, v) } else { (i_ex, v_ex) }
@@ -629,7 +620,6 @@ pub fn calculate_cmo(data: &[f64], period: usize) -> Vec<Option<f64>> {
 
         let diff_old = data[i-period] - data[i-period-1];
         if diff_old > 0.0 { up_sum -= diff_old; } else { down_sum += diff_old; }
-
         if up_sum + down_sum != 0.0 { result[i] = Some(calc(up_sum, down_sum)); }
     }
     result
@@ -688,10 +678,8 @@ pub fn calculate_fcb(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<f6
     for i in period..len {
         let idx_prev = i - 1;
         let start_idx = (idx_prev + 1).saturating_sub(period);
-
         let h_slice = &high[start_idx..=idx_prev];
         let l_slice = &low[start_idx..=idx_prev];
-
         let hh = h_slice.iter().fold(f64::MIN, |a, &b| a.max(b));
         let ll = l_slice.iter().fold(f64::MAX, |a, &b| a.min(b));
 
@@ -699,6 +687,41 @@ pub fn calculate_fcb(high: &[f64], low: &[f64], period: usize) -> (Vec<Option<f6
         lower[i] = Some(ll);
     }
     (upper, lower)
+}
+
+struct LocalBuilder {
+    fields: Vec<Field>,
+    cols: Vec<Arc<dyn Array>>,
+    offset: usize,
+}
+
+impl LocalBuilder {
+    fn new(offset: usize) -> Self {
+        Self {
+            fields: Vec::new(),
+            cols: Vec::new(),
+            offset,
+        }
+    }
+
+    fn add_arc(&mut self, name: &str, arr: Arc<dyn Array>) {
+        self.fields.push(Field::new(name, DataType::Float64, true));
+        if self.offset < arr.len() {
+            self.cols.push(arr.slice(self.offset, arr.len() - self.offset));
+        } else {
+            self.cols.push(Arc::new(Float64Array::from(Vec::<Option<f64>>::new())));
+        }
+    }
+
+    fn add_vec(&mut self, name: &str, data: Vec<Option<f64>>) {
+        self.fields.push(Field::new(name, DataType::Float64, true));
+        let sliced_data = if self.offset < data.len() {
+            data[self.offset..].to_vec()
+        } else {
+            Vec::new()
+        };
+        self.cols.push(Arc::new(Float64Array::from(sliced_data)));
+    }
 }
 
 pub fn append_indicators(
@@ -744,98 +767,92 @@ pub fn append_indicators(
     let results: Vec<(Vec<Field>, Vec<Arc<dyn Array>>)> = (min_period..=max_period)
         .into_par_iter()
         .map(|period| {
-            let mut local_fields = Vec::new();
-            let mut local_cols = Vec::new();
-            let mut add = |name: &str, data: Vec<Option<f64>>| {
-                local_fields.push(Field::new(name, DataType::Float64, true));
-                let sliced_data = if offset < data.len() {
-                    data[offset..].to_vec()
-                } else {
-                    vec![]
-                };
-                local_cols.push(Arc::new(Float64Array::from(sliced_data)) as Arc<dyn Array>);
-            };
+            let mut builder = LocalBuilder::new(offset);
 
-            let sma_data = gpu_smas
-                .as_ref()
-                .and_then(|m| m.get(&period))
-                .cloned()
-                .unwrap_or_else(|| calculate_sma(&close_ref, period));
+            if let Some(arr) = gpu_smas.as_ref().and_then(|m| m.get(&period)) {
+                builder.add_arc(&format!("sma_{}", period), arr.clone());
+            } else {
+                builder.add_vec(&format!("sma_{}", period), calculate_sma(&close_ref, period));
+            }
 
-            add(&format!("sma_{}", period), sma_data);
-            add(&format!("ema_{}", period), calculate_ema(&close_ref, period));
+            builder.add_vec(&format!("ema_{}", period), calculate_ema(&close_ref, period));
 
-            let wma_data = gpu_wmas
-                .as_ref()
-                .and_then(|m| m.get(&period))
-                .cloned()
-                .unwrap_or_else(|| calculate_wma(&close_ref, period));
+            if let Some(arr) = gpu_wmas.as_ref().and_then(|m| m.get(&period)) {
+                builder.add_arc(&format!("wma_{}", period), arr.clone());
+            } else {
+                builder.add_vec(&format!("wma_{}", period), calculate_wma(&close_ref, period));
+            }
 
-            add(&format!("wma_{}", period), wma_data);
-            add(&format!("vwma_{}", period), calculate_vwma(&close_ref, &vol_ref, period));
-            add(&format!("hma_{}", period), calculate_hma(&close_ref, period));
-            add(&format!("smma_{}", period), calculate_smma(&close_ref, period));
-            add(&format!("dema_{}", period), calculate_dema(&close_ref, period));
-            add(&format!("tema_{}", period), calculate_tema(&close_ref, period));
-            add(&format!("rsi_{}", period), calculate_rsi(&close_ref, period));
-            add(&format!("cci_{}", period), calculate_cci(&high_ref, &low_ref, &close_ref, period));
-            add(&format!("mom_{}", period), calculate_momentum(&close_ref, period));
-            add(&format!("roc_{}", period), calculate_roc(&close_ref, period));
-            add(&format!("wpr_{}", period), calculate_williams_r(&high_ref, &low_ref, &close_ref, period));
-            add(&format!("atr_{}", period), calculate_atr(&high_ref, &low_ref, &close_ref, period));
+            builder.add_vec(&format!("vwma_{}", period), calculate_vwma(&close_ref, &vol_ref, period));
+            builder.add_vec(&format!("hma_{}", period), calculate_hma(&close_ref, period));
+            builder.add_vec(&format!("smma_{}", period), calculate_smma(&close_ref, period));
+            builder.add_vec(&format!("dema_{}", period), calculate_dema(&close_ref, period));
+            builder.add_vec(&format!("tema_{}", period), calculate_tema(&close_ref, period));
+            builder.add_vec(&format!("rsi_{}", period), calculate_rsi(&close_ref, period));
+            builder.add_vec(&format!("cci_{}", period), calculate_cci(&high_ref, &low_ref, &close_ref, period));
+            builder.add_vec(&format!("mom_{}", period), calculate_momentum(&close_ref, period));
+            builder.add_vec(&format!("roc_{}", period), calculate_roc(&close_ref, period));
+            builder.add_vec(&format!("wpr_{}", period), calculate_williams_r(&high_ref, &low_ref, &close_ref, period));
+            builder.add_vec(&format!("atr_{}", period), calculate_atr(&high_ref, &low_ref, &close_ref, period));
 
             let (adx, pdi, mdi) = calculate_adx_full(&high_ref, &low_ref, &close_ref, period);
-            add(&format!("adx_{}", period), adx);
-            add(&format!("pdi_{}", period), pdi);
-            add(&format!("mdi_{}", period), mdi);
-            add(&format!("trix_{}", period), calculate_trix(&close_ref, period));
-            add(&format!("sm_rsi_{}", period), calculate_rsi(&close_ref, period));
+            builder.add_vec(&format!("adx_{}", period), adx);
+            builder.add_vec(&format!("pdi_{}", period), pdi);
+            builder.add_vec(&format!("mdi_{}", period), mdi);
+            builder.add_vec(&format!("trix_{}", period), calculate_trix(&close_ref, period));
+            builder.add_vec(&format!("sm_rsi_{}", period), calculate_rsi(&close_ref, period));
 
             let (don_u, don_l, don_m) = calculate_donchian(&high_ref, &low_ref, period);
-            add(&format!("donchian_upper_{}", period), don_u);
-            add(&format!("donchian_lower_{}", period), don_l);
-            add(&format!("donchian_middle_{}", period), don_m);
+            builder.add_vec(&format!("donchian_upper_{}", period), don_u);
+            builder.add_vec(&format!("donchian_lower_{}", period), don_l);
+            builder.add_vec(&format!("donchian_middle_{}", period), don_m);
 
-            let (env_u, env_l, env_m) = gpu_envs
-                .as_ref()
-                .and_then(|m| m.get(&period))
-                .cloned()
-                .unwrap_or_else(|| calculate_envelope_full(&close_ref, period));
+            if let Some((u, l, m)) = gpu_envs.as_ref().and_then(|map| map.get(&period)) {
+                builder.add_arc(&format!("env_upper_{}", period), u.clone());
+                builder.add_arc(&format!("env_lower_{}", period), l.clone());
+                builder.add_arc(&format!("env_middle_{}", period), m.clone());
+            } else {
+                let (u, l, m) = calculate_envelope_full(&close_ref, period);
+                builder.add_vec(&format!("env_upper_{}", period), u);
+                builder.add_vec(&format!("env_lower_{}", period), l);
+                builder.add_vec(&format!("env_middle_{}", period), m);
+            }
 
-            add(&format!("env_upper_{}", period), env_u);
-            add(&format!("env_lower_{}", period), env_l);
-            add(&format!("env_middle_{}", period), env_m);
-            add(&format!("fi_{}", period), calculate_force_index(&close_ref, &vol_ref, period));
-            add(&format!("cmf_{}", period), calculate_cmf(&high_ref, &low_ref, &close_ref, &vol_ref, period));
-            add(&format!("mfi_{}", period), calculate_mfi(&high_ref, &low_ref, &close_ref, &vol_ref, period));
+            builder.add_vec(&format!("fi_{}", period), calculate_force_index(&close_ref, &vol_ref, period));
+            builder.add_vec(&format!("cmf_{}", period), calculate_cmf(&high_ref, &low_ref, &close_ref, &vol_ref, period));
+            builder.add_vec(&format!("mfi_{}", period), calculate_mfi(&high_ref, &low_ref, &close_ref, &vol_ref, period));
 
             let (vi_p, vi_m) = calculate_vortex(&high_ref, &low_ref, &close_ref, period);
-            add(&format!("vi_plus_{}", period), vi_p);
-            add(&format!("vi_minus_{}", period), vi_m);
+            builder.add_vec(&format!("vi_plus_{}", period), vi_p);
+            builder.add_vec(&format!("vi_minus_{}", period), vi_m);
 
             let (ar_u, ar_d) = calculate_aroon(&high_ref, &low_ref, period);
-            add(&format!("aroon_up_{}", period), ar_u.clone());
-            add(&format!("aroon_down_{}", period), ar_d.clone());
-            add(&format!("aroon_osc_{}", period), calculate_aroon_osc(&ar_u, &ar_d));
-            add(&format!("cmo_{}", period), calculate_cmo(&close_ref, period));
+            builder.add_vec(&format!("aroon_up_{}", period), ar_u.clone());
+            builder.add_vec(&format!("aroon_down_{}", period), ar_d.clone());
+            builder.add_vec(&format!("aroon_osc_{}", period), calculate_aroon_osc(&ar_u, &ar_d));
+            builder.add_vec(&format!("cmo_{}", period), calculate_cmo(&close_ref, period));
 
-            let (sd_data, var_data) = gpu_std_map
-                .as_ref()
-                .zip(gpu_var_map.as_ref())
-                .and_then(|(s_map, v_map)| s_map.get(&period).zip(v_map.get(&period)))
-                .map(|(s, v)| (s.clone(), v.clone()))
-                .unwrap_or_else(|| (calculate_std_dev(&close_ref, period), calculate_variance(&close_ref, period)));
+            if let (Some(s_map), Some(v_map)) = (&gpu_std_map, &gpu_var_map) {
+                if let (Some(d_s), Some(d_v)) = (s_map.get(&period), v_map.get(&period)) {
+                    builder.add_arc(&format!("std_dev_{}", period), d_s.clone());
+                    builder.add_arc(&format!("variance_{}", period), d_v.clone());
+                } else {
+                    builder.add_vec(&format!("std_dev_{}", period), calculate_std_dev(&close_ref, period));
+                    builder.add_vec(&format!("variance_{}", period), calculate_variance(&close_ref, period));
+                }
+            } else {
+                builder.add_vec(&format!("std_dev_{}", period), calculate_std_dev(&close_ref, period));
+                builder.add_vec(&format!("variance_{}", period), calculate_variance(&close_ref, period));
+            }
 
-            add(&format!("std_dev_{}", period), sd_data);
-            add(&format!("variance_{}", period), var_data);
-            add(&format!("median_{}", period), calculate_median(&close_ref, period));
+            builder.add_vec(&format!("median_{}", period), calculate_median(&close_ref, period));
 
             let (fcb_u, fcb_l) = calculate_fcb(&high_ref, &low_ref, period);
-            add(&format!("fcb_upper_{}", period), fcb_u);
-            add(&format!("fcb_lower_{}", period), fcb_l);
-            add(&format!("obv_sma_{}", period), calculate_sma(&obv_ref, period));
+            builder.add_vec(&format!("fcb_upper_{}", period), fcb_u);
+            builder.add_vec(&format!("fcb_lower_{}", period), fcb_l);
+            builder.add_vec(&format!("obv_sma_{}", period), calculate_sma(&obv_ref, period));
 
-            (local_fields, local_cols)
+            (builder.fields, builder.cols)
         })
         .collect();
 

@@ -33,8 +33,8 @@ impl Phase1Cleaner {
     pub fn check_batch(&mut self, batch: &RecordBatch) {
         self.batch_counter += 1;
         let num_cols = batch.num_columns();
-        self.log("🔍", format!("Processing Batch #{}: Scanning {} columns (Parallel)", self.batch_counter, num_cols));
 
+        self.log("🔍", format!("Processing Batch #{}: Scanning {} columns (Parallel)", self.batch_counter, num_cols));
         let batch_stats: Vec<Option<(f64, f64)>> = (0..num_cols).into_par_iter().map(|i| {
             let col = batch.column(i);
             if col.data_type() == &DataType::Float64 {
@@ -64,6 +64,7 @@ impl Phase1Cleaner {
             }
         }
 
+        let initial_groups_count = self.duplicate_groups.len();
         let current_groups = std::mem::take(&mut self.duplicate_groups);
         let new_groups: Vec<Vec<usize>> = current_groups.into_par_iter().flat_map(|group| {
             if group.len() <= 1 {
@@ -91,8 +92,8 @@ impl Phase1Cleaner {
             sub_groups
         }).collect();
 
-        if new_groups.len() > 0 { // Just visual feedback check
-            // Logic logging original Anda
+        if new_groups.len() > initial_groups_count {
+            self.log("⚡", format!("Duplicate groups refined: {} groups -> {} unique groups found in this batch", initial_groups_count, new_groups.len()));
         }
         self.duplicate_groups = new_groups;
     }
