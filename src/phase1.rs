@@ -2,6 +2,7 @@ use arrow::array::{Array, Float64Array, RecordBatch};
 use arrow::datatypes::{DataType, SchemaRef};
 use std::collections::HashMap;
 use std::time::Instant;
+use rayon::prelude::*;
 
 pub struct Phase1Cleaner {
     min_max: Vec<Option<(f64, f64)>>,
@@ -15,9 +16,7 @@ impl Phase1Cleaner {
     pub fn new(schema: SchemaRef, start_time: Instant) -> Self {
         let num_cols = schema.fields().len();
         let initial_group: Vec<usize> = (0..num_cols).collect();
-
         println!("[{:>8.2?}] 🧹 [Phase 1] Initialized cleaner structure for {} columns", start_time.elapsed(), num_cols);
-
         Phase1Cleaner {
             min_max: vec![None; num_cols],
             duplicate_groups: vec![initial_group],
@@ -34,49 +33,45 @@ impl Phase1Cleaner {
     pub fn check_batch(&mut self, batch: &RecordBatch) {
         self.batch_counter += 1;
         let num_cols = batch.num_columns();
+        self.log("🔍", format!("Processing Batch #{}: Scanning {} columns (Parallel)", self.batch_counter, num_cols));
 
-        self.log("🔍", format!("Processing Batch #{}: Scanning {} columns for variance & duplicates", self.batch_counter, num_cols));
-
-        // --- 1. Min/Max Check for Zero Variance ---
-        for i in 0..num_cols {
+        let batch_stats: Vec<Option<(f64, f64)>> = (0..num_cols).into_par_iter().map(|i| {
             let col = batch.column(i);
             if col.data_type() == &DataType::Float64 {
                 if let Some(vals) = col.as_any().downcast_ref::<Float64Array>() {
                     let mut b_min = f64::INFINITY;
                     let mut b_max = f64::NEG_INFINITY;
                     let mut has_val = false;
-
                     for v in vals.iter().flatten() {
                         if v < b_min { b_min = v; }
                         if v > b_max { b_max = v; }
                         has_val = true;
                     }
+                    if has_val { return Some((b_min, b_max)); }
+                }
+            }
+            None
+        }).collect();
 
-                    if !has_val { continue; }
-                    match self.min_max[i] {
-                        None => {
-                            self.min_max[i] = Some((b_min, b_max));
-                        }
-                        Some((curr_min, curr_max)) => {
-                            self.min_max[i] = Some((curr_min.min(b_min), curr_max.max(b_max)));
-                        }
+        for (i, stats) in batch_stats.into_iter().enumerate() {
+            if let Some((b_min, b_max)) = stats {
+                match self.min_max[i] {
+                    None => { self.min_max[i] = Some((b_min, b_max)); }
+                    Some((curr_min, curr_max)) => {
+                        self.min_max[i] = Some((curr_min.min(b_min), curr_max.max(b_max)));
                     }
                 }
             }
         }
 
-        // --- 2. Duplicate Detection ---
-        let initial_groups_count = self.duplicate_groups.len();
-        let mut new_groups: Vec<Vec<usize>> = Vec::new();
-
-        for group in &self.duplicate_groups {
+        let current_groups = std::mem::take(&mut self.duplicate_groups);
+        let new_groups: Vec<Vec<usize>> = current_groups.into_par_iter().flat_map(|group| {
             if group.len() <= 1 {
-                new_groups.push(group.clone());
-                continue;
+                return vec![group];
             }
 
             let mut sub_groups: Vec<Vec<usize>> = Vec::new();
-            for &col_idx in group {
+            for &col_idx in &group {
                 let col_data = batch.column(col_idx);
                 let mut found = false;
 
@@ -89,18 +84,16 @@ impl Phase1Cleaner {
                         break;
                     }
                 }
-
                 if !found {
                     sub_groups.push(vec![col_idx]);
                 }
             }
-            new_groups.extend(sub_groups);
-        }
+            sub_groups
+        }).collect();
 
-        if new_groups.len() > initial_groups_count {
-            self.log("⚡", format!("Duplicate groups refined: {} groups -> {} unique groups found in this batch", initial_groups_count, new_groups.len()));
+        if new_groups.len() > 0 { // Just visual feedback check
+            // Logic logging original Anda
         }
-
         self.duplicate_groups = new_groups;
     }
 

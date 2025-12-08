@@ -718,19 +718,34 @@ pub fn append_indicators(
     fields.push(Field::new("obv_line", DataType::Float64, false));
     columns.push(Arc::new(Float64Array::from(obv_vals[offset..].to_vec())));
 
+    let (gpu_smas, gpu_wmas, gpu_std_pair, gpu_envs) = if let Some(gpu) = gpu_helper {
+        let range = min_period..=max_period;
+        (
+            Some(gpu.compute_all_smas(range.clone())),
+            Some(gpu.compute_all_wmas(range.clone())),
+            Some(gpu.compute_all_std_devs(range.clone())),
+            Some(gpu.compute_all_envelopes(range.clone()))
+        )
+    } else {
+        (None, None, None, None)
+    };
+
+    let (gpu_std_map, gpu_var_map) = if let Some((s, v)) = gpu_std_pair {
+        (Some(s), Some(v))
+    } else {
+        (None, None)
+    };
+
     let high_ref = high.to_vec();
     let low_ref = low.to_vec();
     let close_ref = close.to_vec();
     let vol_ref = volumes.to_vec();
     let obv_ref = obv_vals;
-
-    // PARALLEL EXECUTION (RAYON)
     let results: Vec<(Vec<Field>, Vec<Arc<dyn Array>>)> = (min_period..=max_period)
         .into_par_iter()
         .map(|period| {
             let mut local_fields = Vec::new();
             let mut local_cols = Vec::new();
-
             let mut add = |name: &str, data: Vec<Option<f64>>| {
                 local_fields.push(Field::new(name, DataType::Float64, true));
                 let sliced_data = if offset < data.len() {
@@ -741,30 +756,22 @@ pub fn append_indicators(
                 local_cols.push(Arc::new(Float64Array::from(sliced_data)) as Arc<dyn Array>);
             };
 
-            // Hybrid: GPU for parallelizable, CPU for recursive
-            if let Some(gpu) = gpu_helper {
-                add(&format!("sma_{}", period), gpu.calculate_sma(period));
-                add(&format!("wma_{}", period), gpu.calculate_wma(period));
+            let sma_data = gpu_smas
+                .as_ref()
+                .and_then(|m| m.get(&period))
+                .cloned()
+                .unwrap_or_else(|| calculate_sma(&close_ref, period));
 
-                let (env_u, env_l, env_m) = gpu.calculate_envelope(period);
-                add(&format!("env_upper_{}", period), env_u);
-                add(&format!("env_lower_{}", period), env_l);
-                add(&format!("env_middle_{}", period), env_m);
-
-                add(&format!("std_dev_{}", period), gpu.calculate_std_dev(period));
-                add(&format!("variance_{}", period), gpu.calculate_variance(period));
-            } else {
-                add(&format!("sma_{}", period), calculate_sma(&close_ref, period));
-                add(&format!("wma_{}", period), calculate_wma(&close_ref, period));
-                let (env_u, env_l, env_m) = calculate_envelope_full(&close_ref, period);
-                add(&format!("env_upper_{}", period), env_u);
-                add(&format!("env_lower_{}", period), env_l);
-                add(&format!("env_middle_{}", period), env_m);
-                add(&format!("std_dev_{}", period), calculate_std_dev(&close_ref, period));
-                add(&format!("variance_{}", period), calculate_variance(&close_ref, period));
-            }
-
+            add(&format!("sma_{}", period), sma_data);
             add(&format!("ema_{}", period), calculate_ema(&close_ref, period));
+
+            let wma_data = gpu_wmas
+                .as_ref()
+                .and_then(|m| m.get(&period))
+                .cloned()
+                .unwrap_or_else(|| calculate_wma(&close_ref, period));
+
+            add(&format!("wma_{}", period), wma_data);
             add(&format!("vwma_{}", period), calculate_vwma(&close_ref, &vol_ref, period));
             add(&format!("hma_{}", period), calculate_hma(&close_ref, period));
             add(&format!("smma_{}", period), calculate_smma(&close_ref, period));
@@ -781,7 +788,6 @@ pub fn append_indicators(
             add(&format!("adx_{}", period), adx);
             add(&format!("pdi_{}", period), pdi);
             add(&format!("mdi_{}", period), mdi);
-
             add(&format!("trix_{}", period), calculate_trix(&close_ref, period));
             add(&format!("sm_rsi_{}", period), calculate_rsi(&close_ref, period));
 
@@ -790,6 +796,15 @@ pub fn append_indicators(
             add(&format!("donchian_lower_{}", period), don_l);
             add(&format!("donchian_middle_{}", period), don_m);
 
+            let (env_u, env_l, env_m) = gpu_envs
+                .as_ref()
+                .and_then(|m| m.get(&period))
+                .cloned()
+                .unwrap_or_else(|| calculate_envelope_full(&close_ref, period));
+
+            add(&format!("env_upper_{}", period), env_u);
+            add(&format!("env_lower_{}", period), env_l);
+            add(&format!("env_middle_{}", period), env_m);
             add(&format!("fi_{}", period), calculate_force_index(&close_ref, &vol_ref, period));
             add(&format!("cmf_{}", period), calculate_cmf(&high_ref, &low_ref, &close_ref, &vol_ref, period));
             add(&format!("mfi_{}", period), calculate_mfi(&high_ref, &low_ref, &close_ref, &vol_ref, period));
@@ -802,14 +817,22 @@ pub fn append_indicators(
             add(&format!("aroon_up_{}", period), ar_u.clone());
             add(&format!("aroon_down_{}", period), ar_d.clone());
             add(&format!("aroon_osc_{}", period), calculate_aroon_osc(&ar_u, &ar_d));
-
             add(&format!("cmo_{}", period), calculate_cmo(&close_ref, period));
+
+            let (sd_data, var_data) = gpu_std_map
+                .as_ref()
+                .zip(gpu_var_map.as_ref())
+                .and_then(|(s_map, v_map)| s_map.get(&period).zip(v_map.get(&period)))
+                .map(|(s, v)| (s.clone(), v.clone()))
+                .unwrap_or_else(|| (calculate_std_dev(&close_ref, period), calculate_variance(&close_ref, period)));
+
+            add(&format!("std_dev_{}", period), sd_data);
+            add(&format!("variance_{}", period), var_data);
             add(&format!("median_{}", period), calculate_median(&close_ref, period));
 
             let (fcb_u, fcb_l) = calculate_fcb(&high_ref, &low_ref, period);
             add(&format!("fcb_upper_{}", period), fcb_u);
             add(&format!("fcb_lower_{}", period), fcb_l);
-
             add(&format!("obv_sma_{}", period), calculate_sma(&obv_ref, period));
 
             (local_fields, local_cols)

@@ -4,6 +4,7 @@ use burn::tensor::module::conv1d;
 use burn::tensor::ops::ConvOptions;
 use burn::nn::pool::AvgPool1dConfig;
 use burn::nn::PaddingConfig1d;
+use std::collections::HashMap;
 
 type B = Wgpu;
 
@@ -43,96 +44,119 @@ impl GpuIndicatorHelper {
         }
     }
 
-    fn pad_and_export(&self, tensor: Tensor<B, 3>, period: usize) -> Vec<Option<f64>> {
-        let data_vec: Vec<f32> = tensor.into_data().to_vec().expect("Failed to download tensor");
-        let mut result = Vec::with_capacity(self.length);
-
+    fn pad_cpu_data(data: &[f32], length: usize, period: usize) -> Vec<Option<f64>> {
+        let mut result = Vec::with_capacity(length);
         for _ in 0..(period - 1) {
             result.push(None);
         }
-
-        for val in data_vec {
+        for &val in data {
             result.push(Some(val as f64));
         }
-
-        while result.len() < self.length {
+        while result.len() < length {
             result.push(None);
         }
-
-        result.truncate(self.length);
+        result.truncate(length);
         result
     }
 
-    pub fn calculate_sma(&self, period: usize) -> Vec<Option<f64>> {
-        let config = AvgPool1dConfig::new(period)
-            .with_stride(1)
-            .with_padding(PaddingConfig1d::Valid);
-        let pool = config.init();
-        let result = pool.forward(self.close.clone());
-        self.pad_and_export(result, period)
-    }
-
-    pub fn calculate_wma(&self, period: usize) -> Vec<Option<f64>> {
-        let weight_sum = (period * (period + 1)) as f32 / 2.0;
-        let mut weights: Vec<f32> = Vec::with_capacity(period);
-        for i in 1..=period {
-            weights.push(i as f32 / weight_sum);
+    fn tensors_to_map(&self, tensors: Vec<Tensor<B, 1>>, period_list: &[usize]) -> HashMap<usize, Vec<Option<f64>>> {
+        let mut results = HashMap::new();
+        for (i, tensor) in tensors.into_iter().enumerate() {
+            let p = period_list[i];
+            let data = tensor.into_data().to_vec().unwrap_or_default();
+            results.insert(p, Self::pad_cpu_data(&data, self.length, p));
         }
-        let weight_tensor = Tensor::from_data(
-            TensorData::new(weights, [1, 1, period]),
-            &self.device
-        );
-        let options = ConvOptions {
-            stride: [1],
-            padding: [0],
-            dilation: [1],
-            groups: 1,
-        };
-        let result = conv1d(
-            self.close.clone(),
-            weight_tensor,
-            None,
-            options
-        );
-        self.pad_and_export(result, period)
+        results
     }
 
-    pub fn calculate_std_dev(&self, period: usize) -> Vec<Option<f64>> {
-        let config = AvgPool1dConfig::new(period)
-            .with_stride(1)
-            .with_padding(PaddingConfig1d::Valid);
-        let pool = config.init();
-        let sma_x = pool.forward(self.close.clone());
-        let sma_x2 = pool.forward(self.close_sq.clone());
-        let variance = sma_x2.sub(sma_x.powf_scalar(2.0));
-        let std_dev = variance.clamp_min(0.0).sqrt();
-        self.pad_and_export(std_dev, period)
+    pub fn compute_all_smas(&self, periods: std::ops::RangeInclusive<usize>) -> HashMap<usize, Vec<Option<f64>>> {
+        let mut tensors: Vec<Tensor<B, 1>> = Vec::new();
+        let period_list: Vec<usize> = periods.collect();
+
+        for &period in &period_list {
+            let config = AvgPool1dConfig::new(period)
+                .with_stride(1)
+                .with_padding(PaddingConfig1d::Valid);
+            let pool = config.init();
+            let res = pool.forward(self.close.clone());
+            tensors.push(res.flatten(0, 2));
+        }
+
+        self.tensors_to_map(tensors, &period_list)
     }
 
-    pub fn calculate_variance(&self, period: usize) -> Vec<Option<f64>> {
-        let config = AvgPool1dConfig::new(period)
-            .with_stride(1)
-            .with_padding(PaddingConfig1d::Valid);
-        let pool = config.init();
-        let sma_x = pool.forward(self.close.clone());
-        let sma_x2 = pool.forward(self.close_sq.clone());
-        let variance = sma_x2.sub(sma_x.powf_scalar(2.0));
-        self.pad_and_export(variance, period)
+    pub fn compute_all_wmas(&self, periods: std::ops::RangeInclusive<usize>) -> HashMap<usize, Vec<Option<f64>>> {
+        let mut tensors: Vec<Tensor<B, 1>> = Vec::new();
+        let period_list: Vec<usize> = periods.collect();
+
+        for &period in &period_list {
+            let weight_sum = (period * (period + 1)) as f32 / 2.0;
+            let weights: Vec<f32> = (1..=period).map(|i| i as f32 / weight_sum).collect();
+
+            let weight_tensor = Tensor::from_data(
+                TensorData::new(weights, [1, 1, period]),
+                &self.device
+            );
+
+            let options = ConvOptions { stride: [1], padding: [0], dilation: [1], groups: 1 };
+            let res = conv1d(self.close.clone(), weight_tensor, None, options);
+            tensors.push(res.flatten(0, 2));
+        }
+
+        self.tensors_to_map(tensors, &period_list)
     }
 
-    pub fn calculate_envelope(&self, period: usize) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>) {
-        let config = AvgPool1dConfig::new(period)
-            .with_stride(1)
-            .with_padding(PaddingConfig1d::Valid);
-        let pool = config.init();
-        let sma = pool.forward(self.close.clone());
-        let upper = sma.clone().mul_scalar(1.025);
-        let lower = sma.clone().mul_scalar(0.975);
+    pub fn compute_all_std_devs(&self, periods: std::ops::RangeInclusive<usize>) -> (HashMap<usize, Vec<Option<f64>>>, HashMap<usize, Vec<Option<f64>>>) {
+        let mut std_tensors: Vec<Tensor<B, 1>> = Vec::new();
+        let mut var_tensors: Vec<Tensor<B, 1>> = Vec::new();
+        let period_list: Vec<usize> = periods.collect();
 
-        (
-            self.pad_and_export(upper, period),
-            self.pad_and_export(lower, period),
-            self.pad_and_export(sma, period)
-        )
+        for &period in &period_list {
+            let config = AvgPool1dConfig::new(period).with_stride(1).with_padding(PaddingConfig1d::Valid);
+            let pool = config.init();
+            let sma_x = pool.forward(self.close.clone());
+            let sma_x2 = pool.forward(self.close_sq.clone());
+            let variance = sma_x2.sub(sma_x.powf_scalar(2.0));
+            let std_dev = variance.clone().clamp_min(0.0).sqrt();
+
+            std_tensors.push(std_dev.flatten(0, 2));
+            var_tensors.push(variance.flatten(0, 2));
+        }
+
+        let std_results = self.tensors_to_map(std_tensors, &period_list);
+        let var_results = self.tensors_to_map(var_tensors, &period_list);
+
+        (std_results, var_results)
+    }
+
+    pub fn compute_all_envelopes(&self, periods: std::ops::RangeInclusive<usize>) -> HashMap<usize, (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>)> {
+        let mut tensors_u: Vec<Tensor<B, 1>> = Vec::new();
+        let mut tensors_l: Vec<Tensor<B, 1>> = Vec::new();
+        let mut tensors_m: Vec<Tensor<B, 1>> = Vec::new();
+        let period_list: Vec<usize> = periods.collect();
+
+        for &period in &period_list {
+            let config = AvgPool1dConfig::new(period).with_stride(1).with_padding(PaddingConfig1d::Valid);
+            let pool = config.init();
+            let sma = pool.forward(self.close.clone());
+            let upper = sma.clone().mul_scalar(1.025);
+            let lower = sma.clone().mul_scalar(0.975);
+
+            tensors_u.push(upper.flatten(0, 2));
+            tensors_l.push(lower.flatten(0, 2));
+            tensors_m.push(sma.flatten(0, 2));
+        }
+
+        let map_u = self.tensors_to_map(tensors_u, &period_list);
+        let map_l = self.tensors_to_map(tensors_l, &period_list);
+        let map_m = self.tensors_to_map(tensors_m, &period_list);
+        let mut results = HashMap::new();
+        for &p in &period_list {
+            let u = map_u.get(&p).cloned().unwrap_or_default();
+            let l = map_l.get(&p).cloned().unwrap_or_default();
+            let m = map_m.get(&p).cloned().unwrap_or_default();
+            results.insert(p, (u, l, m));
+        }
+        results
     }
 }
