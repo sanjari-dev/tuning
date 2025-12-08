@@ -7,7 +7,6 @@ use clickhouse_rs::types::Block;
 use rust_decimal::prelude::*;
 use chrono::{DateTime, Timelike, Datelike};
 use std::error::Error;
-use std::str::FromStr;
 use std::sync::Arc;
 
 const TARGET_SCALE: u32 = 5;
@@ -47,6 +46,13 @@ pub fn parse_block(block: &Block) -> Result<(Vec<Arc<dyn Array>>, BatchMathData,
         volumes: Vec::with_capacity(row_count),
     };
 
+    let to_decimal_i128 = |val: f64| -> i128 {
+        Decimal::from_f64(val)
+            .unwrap_or(Decimal::ZERO)
+            .round_dp(TARGET_SCALE)
+            .mantissa()
+    };
+
     for row in block.rows() {
         let ts: u32 = row.get("ts")?;
         timestamps.push(ts as i64);
@@ -62,37 +68,43 @@ pub fn parse_block(block: &Block) -> Result<(Vec<Arc<dyn Array>>, BatchMathData,
         instruments.push(row.get("inst")?);
         timeframes.push(row.get("tf")?);
         tick_counts.push(row.get("tick_count")?);
+
         let bv: u64 = row.get("total_bid_volume")?;
         let av: u64 = row.get("total_ask_volume")?;
-        bid_vols.push(bv); ask_vols.push(av);
+        bid_vols.push(bv);
+        ask_vols.push(av);
         math_data.volumes.push((bv + av) as f64);
 
-        let parse_dec = |col: &str| -> Result<i128, Box<dyn Error>> {
-            let s: String = row.get(col)?;
-            let mut d = Decimal::from_str(&s).unwrap_or(Decimal::ZERO);
-            d.rescale(TARGET_SCALE);
-            Ok(d.mantissa())
-        };
-        let parse_f64 = |col: &str| -> Result<f64, Box<dyn Error>> {
-            let s: String = row.get(col)?;
-            Ok(s.parse::<f64>().unwrap_or(0.0))
-        };
+        let open: f64 = row.get("open")?;
+        let high: f64 = row.get("high")?;
+        let low: f64 = row.get("low")?;
+        let close: f64 = row.get("close")?;
 
-        opens_arr.push(parse_dec("open")?); math_data.opens.push(parse_f64("open")?);
-        highs_arr.push(parse_dec("high")?); math_data.highs.push(parse_f64("high")?);
-        lows_arr.push(parse_dec("low")?); math_data.lows.push(parse_f64("low")?);
-        closes_arr.push(parse_dec("close")?); math_data.closes.push(parse_f64("close")?);
+        math_data.opens.push(open);
+        math_data.highs.push(high);
+        math_data.lows.push(low);
+        math_data.closes.push(close);
 
-        min_spreads_arr.push(parse_dec("min_spr")?);
-        max_spreads_arr.push(parse_dec("max_spr")?);
-        avg_spreads_arr.push(parse_dec("avg_spr")?);
-        vwaps_arr.push(parse_dec("vwap")?);
+        opens_arr.push(to_decimal_i128(open));
+        highs_arr.push(to_decimal_i128(high));
+        lows_arr.push(to_decimal_i128(low));
+        closes_arr.push(to_decimal_i128(close));
+
+        let min_spr: f64 = row.get("min_spr")?;
+        let max_spr: f64 = row.get("max_spr")?;
+        let avg_spr: f64 = row.get("avg_spr")?;
+        let vwap: f64 = row.get("vwap")?;
+
+        min_spreads_arr.push(to_decimal_i128(min_spr));
+        max_spreads_arr.push(to_decimal_i128(max_spr));
+        avg_spreads_arr.push(to_decimal_i128(avg_spr));
+        vwaps_arr.push(to_decimal_i128(vwap));
     }
 
     let timezone_utc = "+00:00";
-    let decimal_type = DataType::Decimal128(9, 5);
+    let decimal_type = DataType::Decimal128(18, 5);
     let make_dec_arr = |data: Vec<i128>| -> Arc<dyn Array> {
-        Arc::new(Decimal128Array::from(data).with_data_type(DataType::Decimal128(9, 5)))
+        Arc::new(Decimal128Array::from(data).with_data_type(decimal_type.clone()))
     };
 
     let fields = vec![

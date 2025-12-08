@@ -20,19 +20,19 @@ impl ClickHouseRepository {
         format!(r#"
             SELECT
                 toUnixTimestamp(timestamp) as ts,
-                toString(instrument) as inst,
-                toString(timeframe) as tf,
-                toString(open) as open,
-                toString(high) as high,
-                toString(low) as low,
-                toString(close) as close,
+                instrument as inst,
+                timeframe as tf,
+                toFloat64(open) as open,
+                toFloat64(high) as high,
+                toFloat64(low) as low,
+                toFloat64(close) as close,
                 tick_count,
-                toString(min_spread) as min_spr,
-                toString(max_spread) as max_spr,
-                toString(avg_spread) as avg_spr,
+                toFloat64(min_spread) as min_spr,
+                toFloat64(max_spread) as max_spr,
+                toFloat64(avg_spread) as avg_spr,
                 total_bid_volume,
                 total_ask_volume,
-                toString(vwap) as vwap
+                toFloat64(vwap) as vwap
             FROM candles
             WHERE
                 instrument = '{}'
