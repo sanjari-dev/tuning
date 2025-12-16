@@ -20,8 +20,8 @@ impl ClickHouseRepository {
         format!(r#"
             SELECT
                 toUnixTimestamp(timestamp) as ts,
-                instrument as inst,
-                timeframe as tf,
+                toString(instrument) as inst,
+                toString(timeframe) as tf,
                 toFloat64(open) as open,
                 toFloat64(high) as high,
                 toFloat64(low) as low,
