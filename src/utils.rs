@@ -1,17 +1,21 @@
-use arrow::record_batch::RecordBatch;
-use arrow::compute::filter_record_batch;
 use arrow::array::BooleanArray;
+use arrow::compute::filter_record_batch;
+use arrow::record_batch::RecordBatch;
 use std::error::Error;
 
 pub fn filter_null_rows(batch: &RecordBatch) -> Result<RecordBatch, Box<dyn Error>> {
     let num_rows = batch.num_rows();
-    if num_rows == 0 { return Ok(batch.clone()); }
+    if num_rows == 0 {
+        return Ok(batch.clone());
+    }
 
     let mut keep_row = vec![true; num_rows];
     for col in batch.columns() {
         if col.null_count() > 0 {
             for i in 0..num_rows {
-                if col.is_null(i) { keep_row[i] = false; }
+                if col.is_null(i) {
+                    keep_row[i] = false;
+                }
             }
         }
     }

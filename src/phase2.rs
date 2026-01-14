@@ -1,9 +1,9 @@
-use ndarray::Array2;
+use burn::backend::wgpu::{Wgpu, WgpuDevice};
+use burn::tensor::{Tensor, TensorData};
 use kodama::{linkage, Method};
+use ndarray::Array2;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
-use burn::tensor::{Tensor, TensorData};
-use burn::backend::wgpu::{Wgpu, WgpuDevice};
 
 type B = Wgpu;
 
@@ -21,7 +21,12 @@ impl Phase2Streaming {
         let num_features = feature_names.len();
         let device = WgpuDevice::default();
 
-        println!("[{:>8.2?}] 🔬 [Phase 2] Initialized GPU Tracking for {} features on {:?}", start_time.elapsed(), num_features, device);
+        println!(
+            "[{:>8.2?}] 🔬 [Phase 2] Initialized GPU Tracking for {} features on {:?}",
+            start_time.elapsed(),
+            num_features,
+            device
+        );
 
         Self {
             feature_names,
@@ -34,13 +39,20 @@ impl Phase2Streaming {
     }
 
     fn log(&self, icon: &str, msg: impl std::fmt::Display) {
-        println!("[{:>8.2?}] {} [Phase 2] {}", self.start_time.elapsed(), icon, msg);
+        println!(
+            "[{:>8.2?}] {} [Phase 2] {}",
+            self.start_time.elapsed(),
+            icon,
+            msg
+        );
     }
 
     pub fn add_batch(&mut self, batch_matrix: &Array2<f64>) {
         let batch_rows = batch_matrix.nrows();
         let num_features = batch_matrix.ncols();
-        if batch_rows == 0 { return; }
+        if batch_rows == 0 {
+            return;
+        }
 
         self.n += batch_rows;
 
@@ -55,7 +67,11 @@ impl Phase2Streaming {
         self.sum_xy = self.sum_xy.clone().add(batch_cooccurrence);
     }
 
-    pub fn finalize_and_cluster(&self, valid_features_p1: &[String], threshold: f64) -> Vec<String> {
+    pub fn finalize_and_cluster(
+        &self,
+        valid_features_p1: &[String],
+        threshold: f64,
+    ) -> Vec<String> {
         let n = self.n as f64;
         let valid_set: HashSet<&String> = valid_features_p1.iter().collect();
         let mut valid_indices = Vec::new();
@@ -69,17 +85,35 @@ impl Phase2Streaming {
         }
 
         let num_valid = valid_indices.len();
-        self.log("🧠", format!("Finalizing: Input {} features -> Valid Phase 1 {} features", self.feature_names.len(), num_valid));
+        self.log(
+            "🧠",
+            format!(
+                "Finalizing: Input {} features -> Valid Phase 1 {} features",
+                self.feature_names.len(),
+                num_valid
+            ),
+        );
 
         if num_valid < 2 {
-            self.log("⚠️", "Not enough features to cluster. Returning all valid features");
+            self.log(
+                "⚠️",
+                "Not enough features to cluster. Returning all valid features",
+            );
             return final_names;
         }
 
         self.log("⬇️", "Downloading Accumulators from GPU to CPU...");
 
-        let sum_x_data_f32: Vec<f32> = self.sum_x.to_data().to_vec().expect("Failed to download sum_x");
-        let sum_xy_data_f32: Vec<f32> = self.sum_xy.to_data().to_vec().expect("Failed to download sum_xy");
+        let sum_x_data_f32: Vec<f32> = self
+            .sum_x
+            .to_data()
+            .to_vec()
+            .expect("Failed to download sum_x");
+        let sum_xy_data_f32: Vec<f32> = self
+            .sum_xy
+            .to_data()
+            .to_vec()
+            .expect("Failed to download sum_xy");
         let sum_x_data: Vec<f64> = sum_x_data_f32.into_iter().map(|x| x as f64).collect();
         let sum_xy_data: Vec<f64> = sum_xy_data_f32.into_iter().map(|x| x as f64).collect();
 
@@ -132,7 +166,9 @@ impl Phase2Streaming {
 
         let mut next_cluster_id = num_valid;
         for step in dendrogram.steps() {
-            if step.dissimilarity > dist_threshold { break; }
+            if step.dissimilarity > dist_threshold {
+                break;
+            }
 
             let c1 = step.cluster1;
             let c2 = step.cluster2;
@@ -161,7 +197,14 @@ impl Phase2Streaming {
             }
         }
 
-        self.log("✅", format!("Clustering complete. Kept {} features out of {}", kept_names.len(), num_valid));
+        self.log(
+            "✅",
+            format!(
+                "Clustering complete. Kept {} features out of {}",
+                kept_names.len(),
+                num_valid
+            ),
+        );
         kept_names
     }
 }

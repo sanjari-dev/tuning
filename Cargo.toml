@@ -7,7 +7,7 @@ edition = "2024"
 arrow = { version = "57.1.0", features = ["prettyprint", "csv"] }
 burn = { version = "0.19.1", features = ["wgpu", "train"] }
 chrono = "0.4.42"
-clickhouse-rs = { version = "1.1.0-alpha.1", features = ["default"]}
+clickhouse-rs = { version = "1.1.0-alpha.1", features = ["default"] }
 dotenvy = "0.15.7"
 futures-util = "0.3.31"
 kodama = "0.3.0"

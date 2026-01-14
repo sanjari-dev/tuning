@@ -1,12 +1,12 @@
 mod config;
 mod conversion;
+mod gpu_indicators;
 mod indicators;
 mod phase1;
 mod phase2;
-mod utils;
-mod repository;
 mod pipeline;
-mod gpu_indicators;
+mod repository;
+mod utils;
 
 use config::AppConfig;
 use pipeline::TuningPipeline;
@@ -28,12 +28,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     log!("🚀 Application Startup...");
 
     let config = AppConfig::load()?;
-    log!("[Init] Configuration Loaded: {} ({})", config.query_instrument, config.query_timeframe);
+    log!(
+        "[Init] Configuration Loaded: {} ({})",
+        config.query_instrument,
+        config.query_timeframe
+    );
 
     let pipeline = TuningPipeline::new(config, start_app);
 
     let final_features = pipeline.run_analysis().await?;
-    log!("[Result] Final Feature Set: {} features selected.", final_features.len());
+    log!(
+        "[Result] Final Feature Set: {} features selected.",
+        final_features.len()
+    );
 
     if final_features.is_empty() {
         log!("⚠️ No features selected (or analysis failed). Exiting.");

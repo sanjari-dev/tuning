@@ -1,30 +1,42 @@
-use std::error::Error;
-use std::fs::File;
-use std::sync::Arc;
-use std::cmp;
-use std::time::Instant;
-use futures_util::stream::StreamExt;
-use arrow::array::{Array, RecordBatch, Float64Array};
+use arrow::array::{Array, Float64Array, RecordBatch};
 use arrow::datatypes::Schema;
+use futures_util::stream::StreamExt;
 use ndarray::Array2;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::WriterProperties;
+use std::cmp;
+use std::error::Error;
+use std::fs::File;
+use std::sync::Arc;
+use std::time::Instant;
 
 use crate::config::AppConfig;
-use crate::repository::ClickHouseRepository;
-use crate::phase1::Phase1Cleaner;
-use crate::phase2::Phase2Streaming;
 use crate::conversion::parse_block;
 use crate::gpu_indicators::GpuIndicatorHelper;
 use crate::indicators;
+use crate::phase1::Phase1Cleaner;
+use crate::phase2::Phase2Streaming;
+use crate::repository::ClickHouseRepository;
 use crate::utils::{filter_null_rows, get_tail};
 
 const PROTECTED_COLS: &[&str] = &[
-    "timestamp", "instrument", "timeframe",
-    "open", "high", "low", "close",
-    "tick_count", "min_spread", "max_spread", "avg_spread",
-    "total_bid_volume", "total_ask_volume", "vwap",
-    "time_minute_of_hour", "time_hour_of_day", "time_day_of_week"
+    "timestamp",
+    "instrument",
+    "timeframe",
+    "open",
+    "high",
+    "low",
+    "close",
+    "tick_count",
+    "min_spread",
+    "max_spread",
+    "avg_spread",
+    "total_bid_volume",
+    "total_ask_volume",
+    "vwap",
+    "time_minute_of_hour",
+    "time_hour_of_day",
+    "time_day_of_week",
 ];
 
 const MAX_PERIOD: usize = 200;
@@ -40,7 +52,11 @@ pub struct TuningPipeline {
 impl TuningPipeline {
     pub fn new(config: AppConfig, start_time: Instant) -> Self {
         let repository = ClickHouseRepository::new(&config.db_url);
-        Self { config, repository, start_time }
+        Self {
+            config,
+            repository,
+            start_time,
+        }
     }
 
     fn log(&self, icon: &str, msg: impl std::fmt::Display) {
@@ -48,7 +64,10 @@ impl TuningPipeline {
     }
 
     pub async fn run_analysis(&self) -> Result<Vec<String>, Box<dyn Error>> {
-        self.log("🌊", ">>> START PASS 1: Analysis Stream (Single-Pass Statistics) <<<");
+        self.log(
+            "🌊",
+            ">>> START PASS 1: Analysis Stream (Single-Pass Statistics) <<<",
+        );
 
         let sql = ClickHouseRepository::build_candles_query(&self.config);
         let mut client = self.repository.get_connection().await?;
@@ -66,7 +85,9 @@ impl TuningPipeline {
 
         while let Some(block) = stream.next().await {
             let block = block?;
-            if block.rows().count() == 0 { continue; }
+            if block.rows().count() == 0 {
+                continue;
+            }
 
             let (mut columns, math_data, mut fields) = parse_block(&block)?;
             let row_count = math_data.closes.len();
@@ -77,18 +98,28 @@ impl TuningPipeline {
             let full_volumes = [buf_volumes.as_slice(), math_data.volumes.as_slice()].concat();
 
             if full_closes.len() <= MAX_PERIOD {
-                buf_opens = full_opens; buf_highs = full_highs; buf_lows = full_lows;
-                buf_closes = full_closes; buf_volumes = full_volumes;
+                buf_opens = full_opens;
+                buf_highs = full_highs;
+                buf_lows = full_lows;
+                buf_closes = full_closes;
+                buf_volumes = full_volumes;
                 continue;
             }
 
             let offset = buf_opens.len();
             let gpu_helper = GpuIndicatorHelper::new(&full_closes, &full_highs, &full_lows);
             indicators::append_indicators(
-                &mut fields, &mut columns,
-                &full_opens, &full_highs, &full_lows, &full_closes, &full_volumes,
-                5, 200, offset,
-                Some(&gpu_helper)
+                &mut fields,
+                &mut columns,
+                &full_opens,
+                &full_highs,
+                &full_lows,
+                &full_closes,
+                &full_volumes,
+                5,
+                200,
+                offset,
+                Some(&gpu_helper),
             );
 
             let schema = Arc::new(Schema::new(fields));
@@ -99,10 +130,18 @@ impl TuningPipeline {
             }
 
             if cleaner.is_none() {
-                self.log("🧹", format!("Phase 1 Initialized: Tracking {} columns", batch.num_columns()));
+                self.log(
+                    "🧹",
+                    format!(
+                        "Phase 1 Initialized: Tracking {} columns",
+                        batch.num_columns()
+                    ),
+                );
                 cleaner = Some(Phase1Cleaner::new(batch.schema(), self.start_time));
             }
-            if let Some(c) = &mut cleaner { c.check_batch(&batch); }
+            if let Some(c) = &mut cleaner {
+                c.check_batch(&batch);
+            }
 
             let clean_batch = filter_null_rows(&batch)?;
             if clean_batch.num_rows() > 0 {
@@ -117,9 +156,9 @@ impl TuningPipeline {
                     for (i, field) in schema_ref.fields().iter().enumerate() {
                         let name = field.name();
                         let is_float = field.data_type() == &arrow::datatypes::DataType::Float64;
-                        let is_protected = PROTECTED_COLS.contains(&name.as_str()) ||
-                            name.starts_with("target_") ||
-                            name.starts_with("atr_");
+                        let is_protected = PROTECTED_COLS.contains(&name.as_str())
+                            || name.starts_with("target_")
+                            || name.starts_with("atr_");
 
                         if is_float && !is_protected {
                             candidates.push(name.clone());
@@ -137,7 +176,11 @@ impl TuningPipeline {
                     for r in 0..num_rows {
                         for &col_idx in &phase2_col_indices {
                             let col = clean_batch.column(col_idx);
-                            let val = col.as_any().downcast_ref::<Float64Array>().unwrap().value(r);
+                            let val = col
+                                .as_any()
+                                .downcast_ref::<Float64Array>()
+                                .unwrap()
+                                .value(r);
                             batch_vec.push(val);
                         }
                     }
@@ -158,7 +201,13 @@ impl TuningPipeline {
             }
         }
 
-        self.log("✅", format!("Pass 1 Analysis Loop Completed. Total rows analyzed: {}", total_rows));
+        self.log(
+            "✅",
+            format!(
+                "Pass 1 Analysis Loop Completed. Total rows analyzed: {}",
+                total_rows
+            ),
+        );
 
         let mut final_cols = Vec::new();
         if let Some(c) = cleaner {
@@ -166,12 +215,24 @@ impl TuningPipeline {
 
             if let Some(p2) = phase2 {
                 let kept_p2 = p2.finalize_and_cluster(&keep_p1, 0.95);
-                let protected_forced: Vec<String> = full_schema_names.iter()
-                    .filter(|&n| PROTECTED_COLS.contains(&n.as_str()) || n.starts_with("atr_") || n.starts_with("target_"))
+                let protected_forced: Vec<String> = full_schema_names
+                    .iter()
+                    .filter(|&n| {
+                        PROTECTED_COLS.contains(&n.as_str())
+                            || n.starts_with("atr_")
+                            || n.starts_with("target_")
+                    })
                     .cloned()
                     .collect();
 
-                self.log("🔗", format!("Merging: Protected ({}) + Selected Phase 2 ({})", protected_forced.len(), kept_p2.len()));
+                self.log(
+                    "🔗",
+                    format!(
+                        "Merging: Protected ({}) + Selected Phase 2 ({})",
+                        protected_forced.len(),
+                        kept_p2.len()
+                    ),
+                );
                 final_cols.extend(protected_forced);
                 final_cols.extend(kept_p2);
                 final_cols.sort();
@@ -184,7 +245,10 @@ impl TuningPipeline {
 
     pub async fn run_export(&self, selected_cols: &[String]) -> Result<(), Box<dyn Error>> {
         self.log("💾", ">>> START PASS 2: Export to Parquet <<<");
-        self.log("ℹ️", format!("Exporting top {} rows to '{}'", EXPORT_LIMIT, FINAL_FILE));
+        self.log(
+            "ℹ️",
+            format!("Exporting top {} rows to '{}'", EXPORT_LIMIT, FINAL_FILE),
+        );
 
         let file_out = File::create(FINAL_FILE)?;
         let sql = ClickHouseRepository::build_candles_query(&self.config);
@@ -200,9 +264,13 @@ impl TuningPipeline {
         let mut exported_rows = 0;
 
         while let Some(block) = stream.next().await {
-            if exported_rows >= EXPORT_LIMIT { break; }
+            if exported_rows >= EXPORT_LIMIT {
+                break;
+            }
             let block = block?;
-            if block.rows().count() == 0 { continue; }
+            if block.rows().count() == 0 {
+                continue;
+            }
 
             let (mut columns, math_data, mut fields) = parse_block(&block)?;
             let full_opens = [buf_opens.as_slice(), math_data.opens.as_slice()].concat();
@@ -212,18 +280,28 @@ impl TuningPipeline {
             let full_volumes = [buf_volumes.as_slice(), math_data.volumes.as_slice()].concat();
 
             if full_closes.len() <= MAX_PERIOD {
-                buf_opens = full_opens; buf_highs = full_highs; buf_lows = full_lows;
-                buf_closes = full_closes; buf_volumes = full_volumes;
+                buf_opens = full_opens;
+                buf_highs = full_highs;
+                buf_lows = full_lows;
+                buf_closes = full_closes;
+                buf_volumes = full_volumes;
                 continue;
             }
 
             let offset = buf_opens.len();
             let gpu_helper = GpuIndicatorHelper::new(&full_closes, &full_highs, &full_lows);
             indicators::append_indicators(
-                &mut fields, &mut columns,
-                &full_opens, &full_highs, &full_lows, &full_closes, &full_volumes,
-                5, 200, offset,
-                Some(&gpu_helper)
+                &mut fields,
+                &mut columns,
+                &full_opens,
+                &full_highs,
+                &full_lows,
+                &full_closes,
+                &full_volumes,
+                5,
+                200,
+                offset,
+                Some(&gpu_helper),
             );
 
             let schema = Arc::new(Schema::new(fields));
@@ -240,7 +318,11 @@ impl TuningPipeline {
                     }
                     let projected_schema = Arc::new(schema.project(&idxs)?);
                     let props = WriterProperties::builder().build();
-                    parquet_writer = Some(ArrowWriter::try_new(file_out.try_clone()?, projected_schema, Some(props))?);
+                    parquet_writer = Some(ArrowWriter::try_new(
+                        file_out.try_clone()?,
+                        projected_schema,
+                        Some(props),
+                    )?);
                     output_indices = Some(idxs);
                 }
 
@@ -265,7 +347,10 @@ impl TuningPipeline {
         if let Some(writer) = parquet_writer {
             writer.close()?;
         }
-        self.log("✅", format!("Export Completed. Total rows written: {}", exported_rows));
+        self.log(
+            "✅",
+            format!("Export Completed. Total rows written: {}", exported_rows),
+        );
         Ok(())
     }
 }

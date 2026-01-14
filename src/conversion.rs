@@ -1,11 +1,10 @@
 use arrow::array::{
-    Array, Decimal128Array, StringArray, TimestampSecondArray,
-    UInt32Array, UInt64Array, UInt8Array,
+    Array, Decimal128Array, StringArray, TimestampSecondArray, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow::datatypes::{DataType, Field, TimeUnit};
+use chrono::{DateTime, Datelike, Timelike};
 use clickhouse_rs::types::Block;
 use rust_decimal::prelude::*;
-use chrono::{DateTime, Timelike, Datelike};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -19,7 +18,9 @@ pub struct BatchMathData {
     pub volumes: Vec<f64>,
 }
 
-pub fn parse_block(block: &Block) -> Result<(Vec<Arc<dyn Array>>, BatchMathData, Vec<Field>), Box<dyn Error>> {
+pub fn parse_block(
+    block: &Block,
+) -> Result<(Vec<Arc<dyn Array>>, BatchMathData, Vec<Field>), Box<dyn Error>> {
     let row_count = block.rows().count();
     let mut timestamps: Vec<i64> = Vec::with_capacity(row_count);
     let mut instruments: Vec<String> = Vec::with_capacity(row_count);
@@ -62,7 +63,9 @@ pub fn parse_block(block: &Block) -> Result<(Vec<Arc<dyn Array>>, BatchMathData,
             hours.push(dt.hour() as u8);
             days_of_week.push(dt.weekday().number_from_monday() as u8);
         } else {
-            minutes.push(0); hours.push(0); days_of_week.push(0);
+            minutes.push(0);
+            hours.push(0);
+            days_of_week.push(0);
         }
 
         instruments.push(row.get("inst")?);
@@ -108,7 +111,11 @@ pub fn parse_block(block: &Block) -> Result<(Vec<Arc<dyn Array>>, BatchMathData,
     };
 
     let fields = vec![
-        Field::new("timestamp", DataType::Timestamp(TimeUnit::Second, Some(timezone_utc.into())), false),
+        Field::new(
+            "timestamp",
+            DataType::Timestamp(TimeUnit::Second, Some(timezone_utc.into())),
+            false,
+        ),
         Field::new("instrument", DataType::Utf8, false),
         Field::new("timeframe", DataType::Utf8, false),
         Field::new("open", decimal_type.clone(), false),

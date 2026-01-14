@@ -1,12 +1,12 @@
 use arrow::array::{Array, Float64Array};
-use std::sync::Arc;
-use std::collections::HashMap;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
-use burn::tensor::{Tensor, TensorData};
-use burn::tensor::module::conv1d;
-use burn::tensor::ops::ConvOptions;
 use burn::nn::pool::AvgPool1dConfig;
 use burn::nn::PaddingConfig1d;
+use burn::tensor::module::conv1d;
+use burn::tensor::ops::ConvOptions;
+use burn::tensor::{Tensor, TensorData};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 type B = Wgpu;
 
@@ -62,7 +62,11 @@ impl GpuIndicatorHelper {
         Arc::new(Float64Array::from(result))
     }
 
-    fn tensors_to_map(&self, tensors: Vec<Tensor<B, 1>>, period_list: &[usize]) -> HashMap<usize, Arc<dyn Array>> {
+    fn tensors_to_map(
+        &self,
+        tensors: Vec<Tensor<B, 1>>,
+        period_list: &[usize],
+    ) -> HashMap<usize, Arc<dyn Array>> {
         let mut results = HashMap::new();
         for (i, tensor) in tensors.into_iter().enumerate() {
             let p = period_list[i];
@@ -72,12 +76,17 @@ impl GpuIndicatorHelper {
         results
     }
 
-    pub fn compute_all_smas(&self, periods: std::ops::RangeInclusive<usize>) -> HashMap<usize, Arc<dyn Array>> {
+    pub fn compute_all_smas(
+        &self,
+        periods: std::ops::RangeInclusive<usize>,
+    ) -> HashMap<usize, Arc<dyn Array>> {
         let mut tensors: Vec<Tensor<B, 1>> = Vec::new();
         let period_list: Vec<usize> = periods.collect();
 
         for &period in &period_list {
-            let config = AvgPool1dConfig::new(period).with_stride(1).with_padding(PaddingConfig1d::Valid);
+            let config = AvgPool1dConfig::new(period)
+                .with_stride(1)
+                .with_padding(PaddingConfig1d::Valid);
             let pool = config.init();
             let res = pool.forward(self.close.clone());
             tensors.push(res.flatten(0, 2));
@@ -85,28 +94,45 @@ impl GpuIndicatorHelper {
         self.tensors_to_map(tensors, &period_list)
     }
 
-    pub fn compute_all_wmas(&self, periods: std::ops::RangeInclusive<usize>) -> HashMap<usize, Arc<dyn Array>> {
+    pub fn compute_all_wmas(
+        &self,
+        periods: std::ops::RangeInclusive<usize>,
+    ) -> HashMap<usize, Arc<dyn Array>> {
         let mut tensors: Vec<Tensor<B, 1>> = Vec::new();
         let period_list: Vec<usize> = periods.collect();
 
         for &period in &period_list {
             let weight_sum = (period * (period + 1)) as f32 / 2.0;
             let weights: Vec<f32> = (1..=period).map(|i| i as f32 / weight_sum).collect();
-            let weight_tensor = Tensor::from_data(TensorData::new(weights, [1, 1, period]), &self.device);
-            let options = ConvOptions { stride: [1], padding: [0], dilation: [1], groups: 1 };
+            let weight_tensor =
+                Tensor::from_data(TensorData::new(weights, [1, 1, period]), &self.device);
+            let options = ConvOptions {
+                stride: [1],
+                padding: [0],
+                dilation: [1],
+                groups: 1,
+            };
             let res = conv1d(self.close.clone(), weight_tensor, None, options);
             tensors.push(res.flatten(0, 2));
         }
         self.tensors_to_map(tensors, &period_list)
     }
 
-    pub fn compute_all_std_devs(&self, periods: std::ops::RangeInclusive<usize>) -> (HashMap<usize, Arc<dyn Array>>, HashMap<usize, Arc<dyn Array>>) {
+    pub fn compute_all_std_devs(
+        &self,
+        periods: std::ops::RangeInclusive<usize>,
+    ) -> (
+        HashMap<usize, Arc<dyn Array>>,
+        HashMap<usize, Arc<dyn Array>>,
+    ) {
         let mut std_tensors: Vec<Tensor<B, 1>> = Vec::new();
         let mut var_tensors: Vec<Tensor<B, 1>> = Vec::new();
         let period_list: Vec<usize> = periods.collect();
 
         for &period in &period_list {
-            let config = AvgPool1dConfig::new(period).with_stride(1).with_padding(PaddingConfig1d::Valid);
+            let config = AvgPool1dConfig::new(period)
+                .with_stride(1)
+                .with_padding(PaddingConfig1d::Valid);
             let pool = config.init();
             let sma_x = pool.forward(self.close.clone());
             let sma_x2 = pool.forward(self.close_sq.clone());
@@ -119,18 +145,23 @@ impl GpuIndicatorHelper {
 
         (
             self.tensors_to_map(std_tensors, &period_list),
-            self.tensors_to_map(var_tensors, &period_list)
+            self.tensors_to_map(var_tensors, &period_list),
         )
     }
 
-    pub fn compute_all_envelopes(&self, periods: std::ops::RangeInclusive<usize>) -> HashMap<usize, (Arc<dyn Array>, Arc<dyn Array>, Arc<dyn Array>)> {
+    pub fn compute_all_envelopes(
+        &self,
+        periods: std::ops::RangeInclusive<usize>,
+    ) -> HashMap<usize, (Arc<dyn Array>, Arc<dyn Array>, Arc<dyn Array>)> {
         let mut tensors_u: Vec<Tensor<B, 1>> = Vec::new();
         let mut tensors_l: Vec<Tensor<B, 1>> = Vec::new();
         let mut tensors_m: Vec<Tensor<B, 1>> = Vec::new();
         let period_list: Vec<usize> = periods.collect();
 
         for &period in &period_list {
-            let config = AvgPool1dConfig::new(period).with_stride(1).with_padding(PaddingConfig1d::Valid);
+            let config = AvgPool1dConfig::new(period)
+                .with_stride(1)
+                .with_padding(PaddingConfig1d::Valid);
             let pool = config.init();
             let sma = pool.forward(self.close.clone());
             let upper = sma.clone().mul_scalar(1.025);

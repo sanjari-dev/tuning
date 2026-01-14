@@ -1,6 +1,6 @@
-use clickhouse_rs::{Pool, ClientHandle};
-use std::error::Error;
 use crate::config::AppConfig;
+use clickhouse_rs::{ClientHandle, Pool};
+use std::error::Error;
 
 pub struct ClickHouseRepository {
     pool: Pool,
@@ -17,7 +17,8 @@ impl ClickHouseRepository {
         Ok(client)
     }
     pub fn build_candles_query(config: &AppConfig) -> String {
-        format!(r#"
+        format!(
+            r#" 
             SELECT
                 toUnixTimestamp(timestamp) as ts,
                 toString(instrument) as inst,
@@ -41,9 +42,7 @@ impl ClickHouseRepository {
                 AND timestamp <= toDateTime('{}')
             ORDER BY timestamp ASC
         "#,
-                config.query_instrument,
-                config.query_timeframe,
-                config.query_start,
-                config.query_end)
+            config.query_instrument, config.query_timeframe, config.query_start, config.query_end
+        )
     }
 }
