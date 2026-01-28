@@ -4,6 +4,7 @@ mod gpu_indicators;
 mod indicators;
 mod phase1;
 mod phase2;
+mod phase3;
 mod pipeline;
 mod repository;
 mod utils;
@@ -35,7 +36,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let pipeline = TuningPipeline::new(config, start_app);
-
     let final_features = pipeline.run_analysis().await?;
     log!(
         "[Result] Final Feature Set: {} features selected.",
